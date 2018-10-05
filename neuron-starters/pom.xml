@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.neuron</groupId>
+		<artifactId>neuron-parent</artifactId>
+		<version>1.0.0</version>
+		<relativePath>../neuron-parent</relativePath>
+	</parent>
+	<artifactId>neuron-starters</artifactId>
+	<packaging>pom</packaging>
+	<name>Neuron Framework Starters</name>
+	<description>Neuron Framework Starters</description>
+	<properties>
+		<main.basedir>${basedir}/..</main.basedir>
+        <maven-duplicate-finder-maven-plugin.version>1.3.0</maven-duplicate-finder-maven-plugin.version>
+	</properties>
+	<modules>
+		<module>neuron-starter-parent</module>
+		<module>neuron-starter-app</module>
+	</modules>
+
+	<build>
+		<plugins>
+			<plugin>
+				<groupId>org.apache.maven.plugins</groupId>
+				<artifactId>maven-enforcer-plugin</artifactId>
+				<executions>
+					<execution>
+						<id>enforce-rules</id>
+						<goals>
+							<goal>enforce</goal>
+						</goals>
+						<configuration>
+							<rules>
+								<bannedDependencies>
+									<excludes>
+										<exclude>commons-logging:*:*</exclude>
+									</excludes>
+									<searchTransitive>true</searchTransitive>
+								</bannedDependencies>
+								<dependencyConvergence />
+							</rules>
+							<fail>true</fail>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+			<plugin>
+				<groupId>org.basepom.maven</groupId>
+				<artifactId>duplicate-finder-maven-plugin</artifactId>
+				<version>${maven-duplicate-finder-maven-plugin.version}</version>
+				<executions>
+					<execution>
+						<id>duplicate-dependencies</id>
+						<phase>validate</phase>
+						<goals>
+							<goal>check</goal>
+						</goals>
+						<configuration>
+							<failBuildInCaseOfConflict>true</failBuildInCaseOfConflict>
+						</configuration>
+					</execution>
+				</executions>
+			</plugin>
+		</plugins>
+	</build>
+</project>

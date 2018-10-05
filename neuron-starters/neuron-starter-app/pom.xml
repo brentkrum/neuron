@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+	<parent>
+		<groupId>com.neuron</groupId>
+		<artifactId>neuron-dependencies</artifactId>
+		<version>1.0.0</version>
+		<relativePath>../../neuron-dependencies</relativePath>
+	</parent>
+	
+	<artifactId>neuron-starter-app</artifactId>
+	<packaging>pom</packaging>
+	<name>Neuron Framework starter dependency for applications</name>
+	<description>Neuron Framework starter dependency for applications</description>
+
+	<properties>
+		<main.basedir>${basedir}/../..</main.basedir>
+		<disable.checks>false</disable.checks>
+		<java.version>1.8</java.version>
+		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+		<project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+		<maven.version>3.3.9</maven.version>
+	</properties>
+
+	<dependencies>
+		<dependency>
+    		<groupId>com.neuron</groupId>
+			<artifactId>neuron-core</artifactId>
+		</dependency>
+        <!-- <dependency>
+            <groupId>net.applelg.fw</groupId>
+            <artifactId>applelg-fw-service-bus</artifactId>
+        </dependency> -->
+	</dependencies>
+
+</project>
