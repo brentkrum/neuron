@@ -19,7 +19,7 @@ public class BytePipeSystem_BadThread_Test {
 	@Test
 	public void badThread_createPipeBroker() {
 		try {
-			BytePipeSystem.configurePipeBroker("asdf", ObjectConfigBuilder.config());
+			BytePipeSystem.configurePipeBroker("asdf", ObjectConfigBuilder.config().build());
 			Assertions.fail("Should not get here");
 		} catch(Throwable t) {
 			Assertions.assertTrue(t instanceof IllegalStateException);
@@ -29,7 +29,7 @@ public class BytePipeSystem_BadThread_Test {
 	@Test
 	public void readFromPipeAsAppendBuf_A() {
 		try {
-			BytePipeSystem.readFromPipeAsAppendBuf("asdf", ObjectConfigBuilder.config(), null);
+			BytePipeSystem.readFromPipeAsAppendBuf("asdf", ObjectConfigBuilder.config().build(), null);
 			Assertions.fail("Should not get here");
 		} catch(Throwable t) {
 			Assertions.assertTrue(t instanceof IllegalStateException);
@@ -39,7 +39,7 @@ public class BytePipeSystem_BadThread_Test {
 	@Test
 	public void readFromPipeAsAppendBuf_B() {
 		try {
-			BytePipeSystem.readFromPipeAsAppendBuf("asdf", "asdf", ObjectConfigBuilder.config(), null);
+			BytePipeSystem.readFromPipeAsAppendBuf("asdf", "asdf", ObjectConfigBuilder.config().build(), null);
 			Assertions.fail("Should not get here");
 		} catch(Throwable t) {
 			Assertions.assertTrue(t instanceof IllegalStateException);
@@ -49,7 +49,7 @@ public class BytePipeSystem_BadThread_Test {
 	@Test
 	public void writeToPipe_A() {
 		try {
-			BytePipeSystem.writeToPipe("asdf", ObjectConfigBuilder.config(), null);
+			BytePipeSystem.writeToPipe("asdf", ObjectConfigBuilder.config().build(), null);
 			Assertions.fail("Should not get here");
 		} catch(Throwable t) {
 			Assertions.assertTrue(t instanceof IllegalStateException);
@@ -59,7 +59,7 @@ public class BytePipeSystem_BadThread_Test {
 	@Test
 	public void writeToPipe_B() {
 		try {
-			BytePipeSystem.writeToPipe("asdf", "asdf", ObjectConfigBuilder.config(), null);
+			BytePipeSystem.writeToPipe("asdf", "asdf", ObjectConfigBuilder.config().build(), null);
 			Assertions.fail("Should not get here");
 		} catch(Throwable t) {
 			Assertions.assertTrue(t instanceof IllegalStateException);

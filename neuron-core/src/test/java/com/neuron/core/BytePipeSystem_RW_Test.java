@@ -40,12 +40,12 @@ public class BytePipeSystem_RW_Test {
 		m_testFuture = NeuronApplication.getTaskPool().next().newPromise();
 		
 		TemplateStateManager.registerTemplate("RWTestTemplateA", RWTestTemplateA.class).bringOnline().syncUninterruptibly();
-		NeuronStateManager.registerNeuron("RWTestTemplateA", "NeuronA").bringOnline(ObjectConfigBuilder.config());
+		NeuronStateManager.registerNeuron("RWTestTemplateA", "NeuronA").bringOnline(ObjectConfigBuilder.config().build());
 		createFutureForState(NeuronStateManager.manage("NeuronA").currentRef(), NeuronState.Online).syncUninterruptibly();
 
 		
 		TemplateStateManager.registerTemplate("RWTestTemplateB", RWTestTemplateB.class).bringOnline().syncUninterruptibly();
-		NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB").bringOnline(ObjectConfigBuilder.config());
+		NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB").bringOnline(ObjectConfigBuilder.config().build());
 		createFutureForState(NeuronStateManager.manage("NeuronB").currentRef(), NeuronState.Online).syncUninterruptibly();
 		
 		Assertions.assertTrue(m_testFuture.awaitUninterruptibly(1000), "Timeout waiting for test");
@@ -80,13 +80,13 @@ public class BytePipeSystem_RW_Test {
 			
 			@Override
 			public void connectResources() {
-				BytePipeSystem.configurePipeBroker("A->B", ObjectConfigBuilder.config());
+				BytePipeSystem.configurePipeBroker("A->B", ObjectConfigBuilder.config().build());
 				
-				m_writerContextAB = BytePipeSystem.writeToPipe("A->B", ObjectConfigBuilder.config(), (event, context) -> {
+				m_writerContextAB = BytePipeSystem.writeToPipe("A->B", ObjectConfigBuilder.config().build(), (event, context) -> {
 					// event will either be PipeEmpty or PipeWriteable... write on either
 					LogManager.getLogger(NeuronA.class).debug("Got event: {}", event.toString());
 				});
-				BytePipeSystem.readFromPipeAsAppendBuf("NeuronB", "B->A", ObjectConfigBuilder.config(), (buf) -> {
+				BytePipeSystem.readFromPipeAsAppendBuf("NeuronB", "B->A", ObjectConfigBuilder.config().build(), (buf) -> {
 					if (buf.readableBytes() >= 8) {
 						long cur = buf.readLong();
 						LogManager.getLogger(NeuronA.class).debug("Read: {} 0x{}", cur, Long.toHexString(cur));
@@ -153,13 +153,13 @@ public class BytePipeSystem_RW_Test {
 				// We are still GoingOnline here, but even while we are in the middle of the follow function calls,
 				// the callbacks and listeners can start firing.  Need to be prepared for that and take appropriate action
 				
-				BytePipeSystem.configurePipeBroker("B->A", ObjectConfigBuilder.config());
+				BytePipeSystem.configurePipeBroker("B->A", ObjectConfigBuilder.config().build());
 				
-				m_writerContextBA = BytePipeSystem.writeToPipe("B->A", ObjectConfigBuilder.config(), (event, context) -> {
+				m_writerContextBA = BytePipeSystem.writeToPipe("B->A", ObjectConfigBuilder.config().build(), (event, context) -> {
 					// event will either be PipeEmpty or PipeWriteable... write on either
 					LogManager.getLogger(NeuronB.class).debug("Got event: {}", event.toString());
 				});
-				BytePipeSystem.readFromPipeAsAppendBuf("NeuronA", "A->B", ObjectConfigBuilder.config(), (buf) -> {
+				BytePipeSystem.readFromPipeAsAppendBuf("NeuronA", "A->B", ObjectConfigBuilder.config().build(), (buf) -> {
 					if (buf.readableBytes() >= 8) {
 						long cur = buf.readLong();
 						LogManager.getLogger(NeuronB.class).debug("Read: {} 0x{}", cur, Long.toHexString(cur));

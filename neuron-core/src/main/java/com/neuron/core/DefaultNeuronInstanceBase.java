@@ -20,7 +20,7 @@ public abstract class DefaultNeuronInstanceBase implements INeuronInitialization
 	@Override
 	public ObjectConfig config()
 	{
-		return ObjectConfigBuilder.config();
+		return ObjectConfigBuilder.config().build();
 	}
 
 }

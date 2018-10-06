@@ -1,11 +1,6 @@
 package com.neuron.core;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.List;
 import java.util.concurrent.CountDownLatch;
-
-import org.apache.logging.log4j.LogManager;
 
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -14,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
+import com.neuron.core.test.TestUtils;
 
 import io.netty.util.concurrent.Future;
 
@@ -41,11 +37,7 @@ public class NeuronTemplate_Simple_Test
 //		
 //		assertNull(NeuronSystem.getCallTokenForTemplate("TestTemplate2"));
 
-		List<StatusSystem.CurrentStatus> statuses = StatusSystem.getCurrentStatus();
-		for(StatusSystem.CurrentStatus status : statuses) {
-			LogManager.getLogger(NeuronTemplate_Simple_Test.class).info("Status:\n[{}] {} {}", status.templateRef.logString(),
-					SimpleDateFormat.getDateTimeInstance(SimpleDateFormat.SHORT,SimpleDateFormat.SHORT).format(new Date(status.timestamp)), status.status);
-		}
+		TestUtils.printSystemStatuses();
 
 		final Future<TemplateRef> offlineF;
 		CountDownLatch l = new CountDownLatch(1);
@@ -59,11 +51,7 @@ public class NeuronTemplate_Simple_Test
 		assertTrue(offlineF.awaitUninterruptibly(1000), "Timeout waiting for template to go offline");
 		assertTrue(offlineF.isSuccess());
 
-		statuses = StatusSystem.getCurrentStatus();
-		for(StatusSystem.CurrentStatus status : statuses) {
-			LogManager.getLogger(NeuronTemplate_Simple_Test.class).info("Status:\n[{}] {} {}", status.templateRef.logString(),
-					SimpleDateFormat.getDateTimeInstance(SimpleDateFormat.SHORT,SimpleDateFormat.SHORT).format(new Date(status.timestamp)), status.status);
-		}
+		TestUtils.printSystemStatuses();
 
 		NeuronApplication.shutdown();
 	}

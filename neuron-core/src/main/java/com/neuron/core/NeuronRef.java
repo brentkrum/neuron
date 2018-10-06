@@ -6,6 +6,8 @@ import org.apache.logging.log4j.Level;
 
 import com.neuron.core.NeuronStateManager.NeuronState;
 
+import io.netty.util.concurrent.Promise;
+
 public abstract class NeuronRef {
 	private final TemplateRef m_templateRef;
 	private final int m_id;
@@ -40,29 +42,14 @@ public abstract class NeuronRef {
 	public final String logString() {
 		return m_logString;
 	}
-
-	/**
-	 * This method is helpful for unit tests
-	 * 
-	 * @param testString
-	 * 
-	 * @return
-	 */
-	public final boolean logContains(String testString) {
-		for(NeuronLogEntry entry : getLog()) {
-			if (entry.message.contains(testString)) {
-				return true;
-			}
-		}
-		return false;
-	}
 	
-	abstract List<NeuronLogEntry> getLog();
-	abstract void log(Level level, StringBuilder sb);
+	public abstract List<NeuronLogEntry> getLog();
+	public abstract void log(Level level, StringBuilder sb);
 	public abstract INeuronStateLock lockState();
 	
 	public interface INeuronStateLock extends AutoCloseable {
-		void addStateListener(NeuronState state, INeuronStateListener listener);
+		void addStateListener(NeuronState state, INeuronStateSyncListener listener);
+		void addStateAsyncListener(NeuronState state, INeuronStateAsyncListener listener);
 		
 		NeuronState currentState();
 		default boolean isStateOneOf(NeuronState... states) {
@@ -81,6 +68,12 @@ public abstract class NeuronRef {
 	}
 	
 	public interface INeuronStateListener {
+	}
+	public interface INeuronStateSyncListener extends INeuronStateListener {
 		void onStateReached(boolean successful);
+	}
+	
+	public interface INeuronStateAsyncListener extends INeuronStateListener {
+		void onStateReached(boolean successful, Promise<Void> promise);
 	}
 }

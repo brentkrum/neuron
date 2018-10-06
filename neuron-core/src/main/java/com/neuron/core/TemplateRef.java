@@ -38,24 +38,8 @@ public abstract class TemplateRef {
 		return m_logString;
 	}
 
-	/**
-	 * This method is helpful for unit tests
-	 * 
-	 * @param testString
-	 * 
-	 * @return
-	 */
-	public final boolean logContains(String testString) {
-		for(NeuronLogEntry entry : getLog()) {
-			if (entry.message.contains(testString)) {
-				return true;
-			}
-		}
-		return false;
-	}
-
-	abstract List<NeuronLogEntry> getLog();
-	abstract void log(Level level, StringBuilder sb);
+	public abstract List<NeuronLogEntry> getLog();
+	public abstract void log(Level level, StringBuilder sb);
 	public abstract ITemplateStateLock lockState();
 	
 	public interface ITemplateStateLock extends AutoCloseable, ITemplateStateLockInternal {

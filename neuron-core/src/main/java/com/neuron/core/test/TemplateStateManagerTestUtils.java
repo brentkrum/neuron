@@ -1,6 +1,7 @@
 package com.neuron.core.test;
 
 import com.neuron.core.NeuronApplication;
+import com.neuron.core.NeuronLogEntry;
 import com.neuron.core.TemplateRef;
 import com.neuron.core.TemplateStateManager;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
@@ -20,4 +21,14 @@ public final class TemplateStateManagerTestUtils {
 		}
 		return offlineFuture;
 	}
+
+	public static boolean logContains(TemplateRef ref, String testString) {
+		for(NeuronLogEntry entry : ref.getLog()) {
+			if (entry.message.contains(testString)) {
+				return true;
+			}
+		}
+		return false;
+	}
+	
 }

@@ -37,8 +37,8 @@ public class OutboundSocketNeuronTemplate extends DefaultNeuronTemplateBase
 		String inetHost = config.getString(Config_InetHost, null);
 		Integer port = config.getInteger(Config_Port, null);
 		
-		ObjectUtil.checkNotNull(inetHost, "Need to add Config_InetHost to the neuron config");
-		ObjectUtil.checkNotNull(port, "Need to add Config_Port to the neuron config");
+		ObjectUtil.checkNotNull(inetHost, "Neuron config item Config_InetHost is either missing or invalid");
+		ObjectUtil.checkNotNull(port, "Neuron config item Config_Port is either missing or invalid");
 		
 		return new OutboundSocketNeuron(ref, inetHost, port);
 	}

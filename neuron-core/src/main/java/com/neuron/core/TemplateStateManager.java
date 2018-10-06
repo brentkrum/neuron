@@ -16,6 +16,7 @@ import org.apache.logging.log4j.Logger;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
+import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.IntTrie;
@@ -98,7 +99,8 @@ public final class TemplateStateManager {
 			} catch (Exception ex) {
 				throw new IllegalArgumentException("The template " + templateName + " with the class " + m_templateClass.getCanonicalName() + " does not have a constructor which takes only a TemplateRef", ex);
 			}
-			
+			m_current = new InstanceManagement(m_nextTemplateGen.incrementAndGet());
+			m_current.initOffline();
 		}
 		
 		@Override
@@ -122,7 +124,6 @@ public final class TemplateStateManager {
 			// At this point it is safe to use it outside the lock
 			// It currently is in the state of NA and there is no way to change that except
 			// by the thread there is here.
-			m_current.setSystemListeners();
 			m_current.setState(TemplateState.BeingCreated);
 
 			return m_current.getStateFuture(TemplateState.Online);
@@ -153,13 +154,15 @@ public final class TemplateStateManager {
 				for(int i=1; i<m_statePromise.length; i++) {
 					m_statePromise[i] = m_myEventLoop.newPromise();
 				}
+				setSystemListeners();
 			}
 			
 			private void setSystemListeners() {
 				// NA -> BeingCreated -> Initializing -> RunSelfTest -> SystemOnline -> Online
 				getStateFuture(TemplateState.BeingCreated).addListener((f) -> {
-					// We transitioned from NA to BeingCreated
-					onBeingCreated();
+					if (f.isSuccess()) {
+						onBeingCreated();
+					}
 				});
 				getStateFuture(TemplateState.Initializing).addListener((f) -> {
 					if (f.isSuccess()) {
@@ -259,14 +262,28 @@ public final class TemplateStateManager {
 			
 			private void abortToOffline(Throwable t, boolean logThis) {
 				if (logThis) {
-					NeuronApplication.logError("Template going offline due to exception in startup states", t);
+					NeuronApplication.logError("Template set offline due to exception in startup states", t);
 				}
 				final int start;
 				synchronized(this) {
-					start = m_state.ordinal();
+					start = Integer.max(1, m_state.ordinal());
 					m_state = TemplateState.Offline;
-					StatusSystem.setStatus(this, m_state.toString());
+					StatusSystem.setStatus(this, StatusType.Offline, "Template set offline due to exception in startup states");
 				}
+				for(int i=start; i<m_statePromise.length-1; i++) {
+					m_statePromise[i].tryFailure(t);
+				}
+				m_statePromise[TemplateState.Offline.ordinal()].trySuccess(this);
+			}
+			
+			private void initOffline() {
+				final int start;
+				synchronized(this) {
+					start = Integer.max(1, m_state.ordinal());
+					m_state = TemplateState.Offline;
+					StatusSystem.setStatus(this, StatusType.Offline, "registered");
+				}
+				Throwable t = new RuntimeException();
 				for(int i=start; i<m_statePromise.length-1; i++) {
 					m_statePromise[i].tryFailure(t);
 				}
@@ -278,7 +295,6 @@ public final class TemplateStateManager {
 			}
 			
 			private Future<TemplateRef> setState(TemplateState state) {
-				final boolean setSuccess;
 				final Promise<TemplateRef> promise;
 				synchronized(this) {
 					if (state.ordinal() != m_state.ordinal()+1) {
@@ -286,18 +302,33 @@ public final class TemplateStateManager {
 					}
 					promise = m_statePromise[state.ordinal()];
 					if (m_stateLockCount == 0) {
-						m_state = state;
-						StatusSystem.setStatus(this, m_state.toString());
-						setSuccess = true;
+						setState0(state, promise);
 					} else {
 						m_pendingState = state;
-						setSuccess = false;
 					}
 				}
-				if (setSuccess) {
-					promise.trySuccess(this);
-				}
 				return promise;
+			}
+			
+			private void setState0(TemplateState state, Promise<TemplateRef> promise) {
+				m_state = state;
+				String reasonText = state.toString();
+				final StatusType st;
+				if (m_state.ordinal() < TemplateState.Online.ordinal()) {
+					st = StatusType.GoingOnline;
+				} else if (m_state.ordinal() == TemplateState.Online.ordinal()) {
+					st = StatusType.Online;
+					reasonText = "";
+				} else if (m_state.ordinal() < TemplateState.Offline.ordinal()) {
+					st = StatusType.GoingOffline;
+				} else {
+					st = StatusType.Offline;
+					reasonText = "";
+				}
+				StatusSystem.setStatus(this, st, reasonText);
+				if (!promise.trySuccess(InstanceManagement.this)) {
+					LOG.fatal("Failed setting promise state to {}. This should never happen.", m_state);
+				}
 			}
 
 			@Override
@@ -330,12 +361,8 @@ public final class TemplateStateManager {
 						}
 						if (m_pendingState != null) {
 							Promise<TemplateRef> promise = m_statePromise[m_pendingState.ordinal()];
-							m_state = m_pendingState;
+							setState0(m_pendingState, promise);
 							m_pendingState = null;
-							StatusSystem.setStatus(InstanceManagement.this, m_state.toString());
-							if (!promise.trySuccess(InstanceManagement.this)) {
-								LOG.fatal("Failed setting promise state to {}. This should never happen.", m_state);
-							}
 						}
 					}
 				} finally {
@@ -344,7 +371,7 @@ public final class TemplateStateManager {
 			}
 			
 			@Override
-			List<NeuronLogEntry> getLog() {
+			public List<NeuronLogEntry> getLog() {
 				final ArrayList<NeuronLogEntry> out = new ArrayList<>(MAX_LOG_SIZE);
 				synchronized(m_log) {
 					for(NeuronLogEntry e : m_log) {
@@ -355,7 +382,7 @@ public final class TemplateStateManager {
 			}
 			
 			@Override
-			void log(Level level, StringBuilder sb) {
+			public void log(Level level, StringBuilder sb) {
 				synchronized(m_log) {
 					m_log.add(new NeuronLogEntry(level, sb.toString()));
 					while (m_log.size() > MAX_LOG_SIZE) {

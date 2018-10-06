@@ -1,16 +1,24 @@
 package com.neuron.core.socket;
 
+import java.net.BindException;
+import java.net.SocketException;
+import java.net.UnknownHostException;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
 import com.neuron.core.BytePipeSystem;
 import com.neuron.core.DefaultNeuronInstanceBase;
+import com.neuron.core.IBytePipeBufReaderCallback;
 import com.neuron.core.INeuronInitialization;
 import com.neuron.core.ObjectConfigBuilder;
+import com.neuron.core.StatusSystem;
+import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.BytePipeSystem.IPipeWriterContext;
 import com.neuron.core.NeuronApplication;
 import com.neuron.core.NeuronRef;
 import com.neuron.core.NeuronRef.INeuronStateLock;
+import com.neuron.core.NeuronStateManager.NeuronState;
 
 import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
@@ -30,20 +38,25 @@ import io.netty.util.concurrent.Promise;
 public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements INeuronInitialization
 {
 	private static final Logger LOG = LogManager.getLogger(OutboundSocketNeuron.class);
+	// TODO Need to bullet-proof this class <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+	private enum ConnectionState { None, Connecting, Connected, Closing, Closed }
 	private final Bootstrap m_channelBootstrap = new Bootstrap();
-	private final ConnectListener m_connectListener = new ConnectListener();
 	private final CloseListener m_closeListener = new CloseListener();
-	private String m_inetHost;
-	private int m_port;
+	private final String m_inetHost;
+	private final int m_port;
+	private final String m_statusHostAndPort;
 	
+	private boolean m_deinitializing;
 	private Channel m_currentConnection;
 	private IPipeWriterContext m_inPipeWriter;
+	private ConnectionState m_connectionState = ConnectionState.None;
 	
 	public OutboundSocketNeuron(NeuronRef instanceRef, String inetHost, int port)
 	{
 		super(instanceRef);
 		m_inetHost = inetHost;
 		m_port = port;
+		m_statusHostAndPort = m_inetHost + ":" + m_port;
 	}
 
 	@Override
@@ -61,28 +74,38 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 		
 		m_channelBootstrap.handler(new InboundDataHandler());
 		
-		initPromise.setSuccess((Void)null);
+		m_channelBootstrap.register().addListener((regFuture) -> {
+			if (regFuture.isSuccess()) {
+				initPromise.setSuccess((Void)null);
+			} else {
+				initPromise.setFailure(regFuture.cause());
+			}
+		});
+		
+		try(INeuronStateLock lock = ref().lockState()) {
+			lock.addStateAsyncListener(NeuronState.SystemOnline, (success, completedPromise) -> {
+				if (success) {
+					synchronized(OutboundSocketNeuron.this) {
+						m_connectionState = ConnectionState.Connecting;
+					}
+					NeuronApplication.logInfo(LOG, "Connecting to {}:{}", m_inetHost, m_port);
+					m_channelBootstrap.connect().addListener(new ConnectListener(completedPromise));
+				} else {
+					completedPromise.setSuccess((Void)null);
+				}
+			});
+		}
 	}
 
 	@Override
 	public void connectResources()
 	{
-		BytePipeSystem.configurePipeBroker("In", ObjectConfigBuilder.config());
-		BytePipeSystem.configurePipeBroker("Out", ObjectConfigBuilder.config());
+		BytePipeSystem.configurePipeBroker("In", ObjectConfigBuilder.config().build());
+		BytePipeSystem.configurePipeBroker("Out", ObjectConfigBuilder.config().build());
 		
-		BytePipeSystem.readFromPipeAsChunk("Out", ObjectConfigBuilder.config(), (buf) -> {
-			try(INeuronStateLock lock = ref().lockState()) {
-				synchronized(OutboundSocketNeuron.this) {
-					if (m_currentConnection != null) {
-						m_currentConnection.writeAndFlush(buf);
-					}
-				}
-			} catch(Exception ex) {
-				NeuronApplication.logError(LOG, "Unexpected exception", ex);
-			}
-		});
+		BytePipeSystem.readFromPipeAsChunk("Out", ObjectConfigBuilder.config().build(), new OutPipeReader());
 		
-		m_inPipeWriter = BytePipeSystem.writeToPipe("In", ObjectConfigBuilder.config(), (event, context) -> {
+		m_inPipeWriter = BytePipeSystem.writeToPipe("In", ObjectConfigBuilder.config().build(), (event, context) -> {
 			// No need to care about these events
 		});
 	}
@@ -90,19 +113,43 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 	@Override
 	public void deinit(Promise<Void> promise) {
 		synchronized(OutboundSocketNeuron.this) {
-			if (m_currentConnection != null) {
-				m_currentConnection.close().addListener((f) -> {
-					promise.setSuccess((Void)null);
-				});
+			m_deinitializing = true;
+			if (m_connectionState == ConnectionState.Connected) {
+				try(INeuronStateLock lock = ref().lockState()) {
+					NeuronApplication.logInfo(LOG, "Closing connection");
+				}
+				m_closeListener.setCompletePromise(promise);
+				m_currentConnection.close();
+				m_connectionState = ConnectionState.Closing;
 				return;
+			} else if (m_connectionState == ConnectionState.Connecting) {
+				try(INeuronStateLock lock = ref().lockState()) {
+					NeuronApplication.logInfo(LOG, "Aborting current connection attempt in progress");
+				}
+				m_closeListener.setCompletePromise(promise);
+				m_currentConnection.close();
+				m_connectionState = ConnectionState.Closing;
+				return;
+			} else if (m_connectionState == ConnectionState.Closing) {
+				m_closeListener.setCompletePromise(promise);
 			}
 		}
 		promise.setSuccess((Void)null);
 	}
+	
+	private class OutPipeReader implements IBytePipeBufReaderCallback {
 
-	@Override
-	public void nowOnline() {
-		m_channelBootstrap.connect().addListener(m_connectListener);
+		@Override
+		public void onData(ByteBuf buf) {
+			synchronized(OutboundSocketNeuron.this) {
+				if (m_connectionState != ConnectionState.Connected) {
+					return;
+				}
+				buf.retain();
+				m_currentConnection.writeAndFlush(buf);
+			}
+		}
+		
 	}
 
 	@ChannelHandler.Sharable
@@ -123,48 +170,157 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 		@Override
 		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
 		{
-			try(INeuronStateLock lock = ref().lockState()) {
-				NeuronApplication.logInfo(LOG, "Exception with outbound socket, closing", cause);
+			synchronized(OutboundSocketNeuron.this) {
+				if (m_deinitializing) {
+					return;
+				}
+				if (m_connectionState == ConnectionState.Connected) {
+					m_connectionState = ConnectionState.Closing;
+					try(INeuronStateLock lock = ref().lockState()) {
+						NeuronApplication.logInfo(LOG, "Exception with outbound socket, closing", cause);
+					}
+					// close listener will deal with retrying and stuff
+					ctx.close();
+				} else {
+					try(INeuronStateLock lock = ref().lockState()) {
+						NeuronApplication.logInfo(LOG, "Exception with outbound socket", cause);
+					}
+				}
 			}
-			// send a message in the pipe alerting to the disconnected state?
-			// report the connection/this neuron as down/disconnected -- we should have a place to report things that are "down"
-			ctx.close();
-			// close listener will deal with retrying and stuff
 		}
 	}
 	
 	private class ConnectListener implements ChannelFutureListener {
-
+		private final Promise<Void> m_completedPromise;
+		
+		ConnectListener(Promise<Void> completedPromise) {
+			m_completedPromise = completedPromise;
+		}
+		
 		@Override
 		public void operationComplete(ChannelFuture future) throws Exception
 		{
-			if (future.isSuccess()) {
-				m_currentConnection = future.channel();
-				m_currentConnection.closeFuture().addListener(m_closeListener);
-				// report the connection/this neuron as up/connected -- we should have a place to report things that are "up"
-			} else {
-				future.channel().close();
-				// send a message in the pipe alerting to the disconnected state?
-				// report the connection/this neuron as down/disconnected -- we should have a place to report things that are "down"
-				// set timer to keep retrying
+			try {
+				if (future.isSuccess()) {
+					synchronized(OutboundSocketNeuron.this) {
+						if (m_deinitializing) {
+							return;
+						}
+						if (m_connectionState != ConnectionState.Connecting) {
+							try(INeuronStateLock lock = ref().lockState()) {
+								LOG.error("ConnectListener got an operationComplete(success) while connectionState is {}", m_connectionState.toString());
+							}
+							return;
+						}						
+						m_connectionState = ConnectionState.Connected;
+						m_currentConnection = future.channel();
+						try(INeuronStateLock lock = ref().lockState()) {
+							NeuronApplication.logInfo(LOG, "Connected");
+							StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Up, "Connected");
+						}
+						m_currentConnection.closeFuture().addListener(m_closeListener);
+					}
+					
+				} else {
+					String statusText = future.cause().getMessage();
+					final boolean takeOffline;
+					Throwable cause = future.cause(); 
+					if (cause instanceof UnknownHostException) {
+						takeOffline = true;
+					} else if (cause instanceof SocketException && cause.getCause() instanceof BindException) {
+						takeOffline = true;
+						cause = cause.getCause();
+					} else {
+						takeOffline = false;
+					}
+					synchronized(OutboundSocketNeuron.this) {
+						if (m_deinitializing) {
+							return;
+						}
+						try(INeuronStateLock lock = ref().lockState()) {
+							if (m_connectionState != ConnectionState.Connecting) {
+								LOG.error("ConnectListener got an operationComplete(failed) while connectionState is {}", m_connectionState.toString());
+								return;
+							}
+							m_connectionState = ConnectionState.Closed;
+							m_currentConnection = null;
+							if (takeOffline) {
+								NeuronApplication.logError(LOG, "Connection to {}:{} failed, taking neuron offline", m_inetHost, m_port, cause);
+								lock.addStateListener(NeuronState.Online, (success) -> {
+									try(INeuronStateLock onlineLock = ref().lockState()) {
+										onlineLock.takeOffline();
+									}
+								});
+							} else {
+								NeuronApplication.logError(LOG, "Connection to {}:{} failed, but will continue to retry", m_inetHost, m_port, cause);
+							}
+						}
+						// There is no close listener, so we only have to worry about ourselves
+						future.channel().close();
+						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, statusText);
+						
+						// send a message in the pipe alerting to the disconnected state?
+						// set timer to keep retrying
+					}
+				}
+			} finally {
+				m_completedPromise.setSuccess((Void)null);
 			}
 		}
 		
 	}
 	
 	private class CloseListener implements ChannelFutureListener {
+		private boolean m_called;
+		private Promise<Void> m_completePromise;
+		
+		
+		synchronized void setCompletePromise(Promise<Void> promise) {
+			if (m_called) {
+				promise.setSuccess((Void)null);
+			} else {
+				m_completePromise = promise;
+			}
+		}
+		
+		public synchronized void reset() {
+			m_called = false;
+			m_completePromise = null;
+		}
 
 		@Override
 		public void operationComplete(ChannelFuture future) throws Exception
 		{
-			m_currentConnection = null;
-			// Channel has closed
-			// if we are shutting down / unloading
-			// 	report the connection/this neuron as down/disconnected due to neuron unload
-			// else
-			// 	send a message in the pipe alerting to the disconnected state?
-			// 	report the connection/this neuron as down/disconnected -- we should have a place to report things that are "down"
-			//		set a timer to keep retrying
+			synchronized(OutboundSocketNeuron.this) {
+				try(INeuronStateLock lock = ref().lockState()) {
+					if (m_connectionState != ConnectionState.Connected && m_connectionState != ConnectionState.Closing) {
+						LOG.error("CloseListener got an operationComplete(failed) while connectionState is {}", m_connectionState.toString());
+						return;
+					}
+					NeuronApplication.logInfo(LOG, "Connection closed");
+					
+					// Channel has closed
+					m_connectionState = ConnectionState.Closed;
+					m_currentConnection = null;
+					
+					// if we are shutting down / unloading
+					if (m_deinitializing) {
+						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, "Disconnected, neuron deinitialized");
+					} else {
+						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, "Disconnected unexpectedly");
+						// send a message in the pipe alerting to the disconnected state?
+						// report the connection/this neuron as down/disconnected -- we should have a place to report things that are "down"
+						//	set a timer to keep retrying
+					}
+				} finally {
+					synchronized(this) {
+						m_called = true;
+						if (m_completePromise != null) {
+							m_completePromise.setSuccess((Void)null);
+						}
+					}
+				}
+			}
 		}
 		
 	}

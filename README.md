@@ -1,1 +1,1 @@
-# neuron-core
+# neuron

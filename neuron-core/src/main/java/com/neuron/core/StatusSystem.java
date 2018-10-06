@@ -1,10 +1,7 @@
 package com.neuron.core;
 
-import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.concurrent.locks.ReadWriteLock;
-import java.util.concurrent.locks.ReentrantReadWriteLock;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -15,14 +12,14 @@ import com.neuron.utility.IntTrie;
 
 public class StatusSystem
 {
+	public enum StatusType { Up, Down, Intermittent, Online, Offline, GoingOnline, GoingOffline} ;
+	
 	private static final Logger LOG = LogManager.getLogger(StatusSystem.class);
 	private static final int TEMPLATE_STATUS_TRAIL_SIZE = Config.getFWInt("core.StatusSystem.templateStatusTrailSize", 16);
-	private static final String NEURON_TEMPLATE_TYPE_NAME = "NeuronTemplate";
-	private static final String NEURON_INSTANCE_TYPE_NAME = "Neuron";
 	
-	private static final ReadWriteLock m_typeLock = new ReentrantReadWriteLock(true);
-	private static final CharSequenceTrie<String> m_types = new CharSequenceTrie<>();
-	private static final List<String> m_typesList = new LinkedList<>();
+//	private static final ReadWriteLock m_typeLock = new ReentrantReadWriteLock(true);
+//	private static final CharSequenceTrie<String> m_types = new CharSequenceTrie<>();
+//	private static final List<String> m_typesList = new LinkedList<>();
 	
 	private static final Object m_templateLock = new Object();
 	private static final IntTrie<TemplateStatusHolder> m_templateStatusTrie = new IntTrie<>();
@@ -30,12 +27,15 @@ public class StatusSystem
 	private static final Object m_neuronLock = new Object();
 	private static final IntTrie<NeuronStatusHolder> m_neuronStatusTrie = new IntTrie<>();
 	
-	static {
-		m_types.addOrFetch(NEURON_TEMPLATE_TYPE_NAME, "");
-		m_typesList.add(NEURON_TEMPLATE_TYPE_NAME);
-		m_types.addOrFetch(NEURON_INSTANCE_TYPE_NAME, "");
-		m_typesList.add(NEURON_INSTANCE_TYPE_NAME);
-	}
+	private static final Object m_hostLock = new Object();
+	private static final CharSequenceTrie<HostStatusHolder> m_hostStatusTrie = new CharSequenceTrie<>();
+	
+//	static {
+//		m_types.addOrFetch(NEURON_TEMPLATE_TYPE_NAME, "");
+//		m_typesList.add(NEURON_TEMPLATE_TYPE_NAME);
+//		m_types.addOrFetch(NEURON_INSTANCE_TYPE_NAME, "");
+//		m_typesList.add(NEURON_INSTANCE_TYPE_NAME);
+//	}
 
 	static void register() {
 		NeuronApplication.register(new Registrant());
@@ -50,47 +50,61 @@ public class StatusSystem
 //		String neuronInstanceName = null;
 //		setStatus(neuronTemplateName, neuronTemplateId, neuronInstanceName, neuronInstanceId, status);
 //	}
-	public static void setStatus(TemplateRef ref, String status) {
+	public static void setStatus(TemplateRef ref, StatusType status, String reasonText) {
 		synchronized(m_templateLock) {
-			TemplateStatusHolder h = m_templateStatusTrie.get(ref.generation());
+			TemplateStatusHolder h = m_templateStatusTrie.get(ref.id());
 			if (h == null) {
 				h = new TemplateStatusHolder(ref);
-				m_templateStatusTrie.addOrFetch(ref.generation(), h);
+				m_templateStatusTrie.addOrFetch(ref.id(), h);
 			}
-			h.addStatusTrail(status);
+			h.addStatusTrail(status, reasonText);
 		}
 		if (LOG.isDebugEnabled()) {
-			LOG.debug("{}: {}", ref.logString(), status);
+			LOG.debug("{}: {} {}", ref.logString(), status, reasonText);
 		}
 	}
 	
-	public static void setStatus(NeuronRef instanceRef, String status) {
+	public static void setStatus(NeuronRef instanceRef, StatusType status, String reasonText) {
 		synchronized(m_neuronLock) {
-			NeuronStatusHolder h = m_neuronStatusTrie.get(instanceRef.generation());
+			NeuronStatusHolder h = m_neuronStatusTrie.get(instanceRef.id());
 			if (h == null) {
 				h = new NeuronStatusHolder(instanceRef);
-				m_neuronStatusTrie.addOrFetch(instanceRef.generation(), h);
+				m_neuronStatusTrie.addOrFetch(instanceRef.id(), h);
 			}
-			h.addStatusTrail(status);
+			h.addStatusTrail(status, reasonText);
 		}
 		if (LOG.isDebugEnabled()) {
-			LOG.debug("({}) {}: {}", instanceRef.templateRef().logString(), instanceRef.logString(), status);
+			LOG.debug("({}: {} {}", instanceRef.logString(), status, reasonText);
 		}
 	}
 
-	public static List<String> getStatusTypes() {
-		final List<String> out;
-		m_typeLock.readLock().lock();
-		try {
-			out = new ArrayList<String>(m_typesList.size());
-			for(String s : m_typesList) {
-				out.add(s);
+	public static void setHostStatus(String hostAndPort, StatusType status, String reasonText) {
+		synchronized(m_hostLock) {
+			HostStatusHolder h = m_hostStatusTrie.get(hostAndPort);
+			if (h == null) {
+				h = new HostStatusHolder(hostAndPort);
+				m_hostStatusTrie.addOrFetch(hostAndPort, h);
 			}
-		} finally {
-			m_typeLock.readLock().unlock();
+			h.addStatusTrail(status, reasonText);
 		}
-		return out;
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("{}: {} {}", hostAndPort, status, reasonText);
+		}
 	}
+
+//	public static List<String> getStatusTypes() {
+//		final List<String> out;
+//		m_typeLock.readLock().lock();
+//		try {
+//			out = new ArrayList<String>(m_typesList.size());
+//			for(String s : m_typesList) {
+//				out.add(s);
+//			}
+//		} finally {
+//			m_typeLock.readLock().unlock();
+//		}
+//		return out;
+//	}
 	
 	public static List<CurrentStatus> getCurrentStatus() {
 		final List<CurrentStatus> out = new LinkedList<>();
@@ -112,38 +126,65 @@ public class StatusSystem
 				return true;
 			});
 		}
+		synchronized(m_hostLock) {
+			m_hostStatusTrie.forEach((key, value) -> {
+				CurrentStatus cs = value.getCurrentStatus();
+				if (cs != null) {
+					out.add(cs);
+				}
+				return true;
+			});
+		}
 		return out;
 	}
 	
 	public static class CurrentStatus {
-		public final String type;
-		public final TemplateRef templateRef;
-		public final NeuronRef neuronRef;
 		public final long timestamp;
-		public final String status;
+		public final StatusType status;
+		public final String reasonText;
 		
-		CurrentStatus(NeuronRef ref, long timestamp, String status) {
-			this.type = NEURON_TEMPLATE_TYPE_NAME;
+		CurrentStatus(long timestamp, StatusType status, String reasonText) {
 			this.timestamp = timestamp;
 			this.status = status;
-			this.templateRef = ref.templateRef();
+			this.reasonText = reasonText;
+		}
+	}
+	
+	public static class CurrentNeuronStatus extends CurrentStatus {
+		public final NeuronRef neuronRef;
+		
+		CurrentNeuronStatus(long timestamp, StatusType status, String reasonText, NeuronRef ref) {
+			super(timestamp, status, reasonText);
 			this.neuronRef = ref;
 		}
 		
-		CurrentStatus(TemplateRef ref, long timestamp, String status) {
-			this.type = NEURON_TEMPLATE_TYPE_NAME;
-			this.timestamp = timestamp;
-			this.status = status;
+	}
+	
+	public static class CurrentTemplateStatus extends CurrentStatus {
+		public final TemplateRef templateRef;
+		
+		CurrentTemplateStatus(long timestamp, StatusType status, String reasonText, TemplateRef ref) {
+			super(timestamp, status, reasonText);
 			this.templateRef = ref;
-			this.neuronRef = null;
 		}
+		
+	}
+	
+	public static class CurrentHostStatus extends CurrentStatus {
+		public final String hostAndPort;
+		
+		CurrentHostStatus(long timestamp, StatusType status, String reasonText, String hostAndPort) {
+			super(timestamp, status, reasonText);
+			this.hostAndPort = hostAndPort;
+		}
+		
 	}
 	
 	private static class StatusHolder {
 		private final FastLinkedList<StatusEntry> m_statusTrail = new FastLinkedList<>(); // Keep the last X status entries
 		
-		public void addStatusTrail(String status) {
-			m_statusTrail.add(new StatusEntry(System.currentTimeMillis(), status));
+		public void addStatusTrail(StatusType status, String reasonText) {
+			m_statusTrail.add(new StatusEntry(System.currentTimeMillis(), status, reasonText));
 			while (m_statusTrail.count() > TEMPLATE_STATUS_TRAIL_SIZE) {
 				m_statusTrail.removeFirst();
 			}
@@ -166,7 +207,7 @@ public class StatusSystem
 			if (e == null) {
 				return null;
 			}
-			return new CurrentStatus(m_ref, e.timestamp, e.status);
+			return new CurrentTemplateStatus(e.timestamp, e.status, e.reasonText, m_ref);
 		}
 	}
 	
@@ -182,25 +223,43 @@ public class StatusSystem
 			if (e == null) {
 				return null;
 			}
-			return new CurrentStatus(m_instanceRef, e.timestamp, e.status);
+			return new CurrentNeuronStatus(e.timestamp, e.status, e.reasonText, m_instanceRef);
+		}
+	}
+	
+	private static class HostStatusHolder extends StatusHolder{
+		private final String m_hostAndPort;
+		
+		HostStatusHolder(String hostAndPort) {
+			m_hostAndPort = hostAndPort;
+		}
+		
+		CurrentStatus getCurrentStatus() {
+			StatusEntry e = getMostRecentStatus();
+			if (e == null) {
+				return null;
+			}
+			return new CurrentHostStatus(e.timestamp, e.status, e.reasonText, m_hostAndPort);
 		}
 	}
 	
 
-	private static class StatusEntry extends FastLinkedList.LLNode<StatusEntry> {
+	private static class StatusEntry extends FastLinkedList.LLNode<StatusEntry>{
 		private final long timestamp;
-		private final String status;
+		private final StatusType status;
+		private final String reasonText;
 		
-		StatusEntry(long timestamp, String status) {
+		StatusEntry(long timestamp, StatusType status, String reasonText) {
 			this.timestamp = timestamp;
 			this.status = status;
+			this.reasonText = reasonText;
 		}
-		
+
 		@Override
-		protected StatusEntry getObject()
-		{
+		protected StatusEntry getObject() {
 			return this;
 		}
+		
 	}
 	
 	private static class Registrant implements INeuronApplicationSystem {

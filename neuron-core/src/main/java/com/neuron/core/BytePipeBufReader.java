@@ -92,7 +92,7 @@ class BytePipeBufReader implements BytePipeSystem.IBytePipeReader
 		@Override
 		protected void _doWork(INeuronStateLock neuronLock)
 		{
-			// We only deliver data to Online and GoingOffline neurons
+			// We only deliver data to SystemOnline, Online and GoingOffline neurons
 			if (!neuronLock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online, NeuronState.GoingOffline)) {
 				return;
 			}

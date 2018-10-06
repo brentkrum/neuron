@@ -14,12 +14,10 @@ import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateManager.INeuronManagement;
 import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
-import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.core.TemplateStateManager.ITemplateManagement;
-import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
+import com.neuron.core.test.TemplateStateManagerTestUtils;
 
-import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 
 public class BytePipeSystem_ContinuousWrite_Test {
@@ -27,7 +25,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 	public static void init() {
 		System.setProperty("io.netty.leakDetection.level", "PARANOID");
 		System.setProperty("io.netty.leakDetection.targetRecords", "1");
-		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
+//		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
 //		System.setProperty("logger.com.neuron.core.BytePipeSystem", "DEBUG");
 //		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
 		
@@ -52,67 +50,40 @@ public class BytePipeSystem_ContinuousWrite_Test {
 		tMgt.bringOnline().syncUninterruptibly();
 		
 		INeuronManagement nMgt = NeuronStateManager.registerNeuron(tMgt.currentRef(), "NeuronA");
-		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config()));
+		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 
 				
 		ITemplateManagement tMgtB = TemplateStateManager.registerTemplate("RWTestTemplateB", RWTestTemplateB.class);
-		tMgtB.bringOnline().syncUninterruptibly();
+		INeuronManagement nMgtB = NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB");
 
-		INeuronManagement nMgtB = NeuronStateManager.registerNeuron(tMgtB.currentRef(), "NeuronB");
-		assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config()));
-		assertTrue(createFutureForState(nMgtB.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
-
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Running test");
-		// Let the test run for 250ms
-		m_testFuture.awaitUninterruptibly(250);
-		if (m_testFuture.isDone() && !m_testFuture.isSuccess()) {
-			Assertions.fail(m_testFuture.cause());
+		for(int i=0; i<10; i++) {
+			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Template B online");
+			tMgtB.bringOnline().syncUninterruptibly();
+			
+			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
+			assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config().build()));
+			assertTrue(createFutureForState(nMgtB.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron B to enter Online state");
+			
+			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Running test - {}", i);
+			// Let the test run for 250ms
+			m_testFuture.awaitUninterruptibly(250);
+			if (m_testFuture.isDone() && !m_testFuture.isSuccess()) {
+				Assertions.fail(m_testFuture.cause());
+			}
+	
+			// Take template B offline (hence neuron B too)
+			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Take template B offline");
+			TemplateStateManagerTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
+			
+			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Done reading {} firstLong={} lastLong={}", i, m_firstLong, m_lastLong);
+			
+			m_firstLong = -1;
+			m_lastLong = -1;
 		}
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Done reading 1 firstLong={} lastLong={}", m_firstLong, m_lastLong);
-
-		// Take template B offline (hence neuron B too)
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Take template B offline");
-		Future<TemplateRef> offlineFuture;
-		try(ITemplateStateLock lock = tMgtB.currentRef().lockState()) {
-			assertTrue(lock.takeOffline());
-			offlineFuture = lock.getStateFuture(TemplateState.Offline);
-		}
-		assertTrue(offlineFuture.awaitUninterruptibly(1000), "Timeout waiting for template B to enter Offline state");
-		
-		m_firstLong = -1;
-		m_lastLong = -1;
-		
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Template B online");
-		tMgtB.bringOnline().syncUninterruptibly();
-		
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
-		assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config()));
-		assertTrue(createFutureForState(nMgtB.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron B to enter Online state");
-		
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Running test");
-
-		// Let the test run for 250ms
-		m_testFuture.awaitUninterruptibly(250);
-		if (m_testFuture.isDone() && !m_testFuture.isSuccess()) {
-			Assertions.fail(m_testFuture.cause());
-		}
-		
-		// Take template B offline (hence neuron B too)
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Take template B offline again");
-		try(ITemplateStateLock lock = tMgtB.currentRef().lockState()) {
-			assertTrue(lock.takeOffline());
-			offlineFuture = lock.getStateFuture(TemplateState.Offline);
-		}
-		assertTrue(offlineFuture.awaitUninterruptibly(1000), "Timeout waiting for template B to enter Offline state");
-		LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Done reading 2 firstLong={} lastLong={}", m_firstLong, m_lastLong);
 		
 		// Take template A offline (hence neuron A too)
-		try(ITemplateStateLock lock = tMgt.currentRef().lockState()) {
-			assertTrue(lock.takeOffline());
-			offlineFuture = lock.getStateFuture(TemplateState.Offline);
-		}
-		assertTrue(offlineFuture.awaitUninterruptibly(1000), "Timeout waiting for template A to enter Offline state");
+		TemplateStateManagerTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
 	}
 
 	public static class RWTestTemplateA extends DefaultTestNeuronTemplateBase {
@@ -139,10 +110,10 @@ public class BytePipeSystem_ContinuousWrite_Test {
 			
 			@Override
 			public void connectResources() {
-				BytePipeSystem.configurePipeBroker("A->B", ObjectConfigBuilder.config());
+				BytePipeSystem.configurePipeBroker("A->B", ObjectConfigBuilder.config().build());
 				
 				m_worker = new ConstantWriter();
-				m_writerContextAB = BytePipeSystem.writeToPipe("A->B", ObjectConfigBuilder.config(), (event, context) -> {
+				m_writerContextAB = BytePipeSystem.writeToPipe("A->B", ObjectConfigBuilder.config().build(), (event, context) -> {
 					// event will either be PipeEmpty or PipeWriteable... write on either
 					m_worker.requestMoreWork();
 				});
@@ -215,7 +186,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 				// We are still GoingOnline here, but even while we are in the middle of the follow function calls,
 				// the callbacks and listeners can start firing.  Need to be prepared for that and take appropriate action
 				
-				BytePipeSystem.readFromPipeAsAppendBuf("NeuronA", "A->B", ObjectConfigBuilder.config(), (buf) -> {
+				BytePipeSystem.readFromPipeAsAppendBuf("NeuronA", "A->B", ObjectConfigBuilder.config().build(), (buf) -> {
 //					LogManager.getLogger(NeuronB.class).info(">>>>>>>> Reading");
 					while(true) {
 						if (buf.readableBytes() < 8) {

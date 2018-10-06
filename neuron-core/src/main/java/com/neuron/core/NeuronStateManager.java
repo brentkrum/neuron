@@ -14,6 +14,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
+import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.netty.TSPromiseCombiner;
@@ -95,6 +96,8 @@ public final class NeuronStateManager {
 			m_id = m_nextNeuronId.incrementAndGet();
 			m_templateName = templateName;
 			m_name = neuronName;
+			m_current = new InstanceManagement(TemplateStateManager.manage(m_templateName).currentRef(), m_nextNeuronGen.incrementAndGet());
+			m_current.initOffline();
 		}
 		
 		// This could be called by anybody anywhere
@@ -159,7 +162,7 @@ public final class NeuronStateManager {
 			});
 			mgt.getStateManager(NeuronState.Disconnecting).setPostListener((boolean successful) -> {
 				if (successful) {
-					mgt.setState(NeuronState.DeInitializing);
+					mgt.onDeInitializing();
 				}
 			});
 			mgt.getStateManager(NeuronState.DeInitializing).setPostListener((boolean successful) -> {
@@ -307,20 +310,48 @@ public final class NeuronStateManager {
 				}
 			}
 			
+			public void onDeInitializing() {
+				final Promise<Void> p = m_myEventLoop.newPromise();
+				p.addListener((f) -> {
+					setState(NeuronState.DeInitializing);
+				});
+				try(INeuronStateLock lock = m_current.lockState()) {
+					try {
+						m_neuron.deinit(p);
+					} catch(Exception ex) {
+						NeuronApplication.logError(LOG, "Unhandled exception in neuron.deinit()", ex);
+					}
+				}
+			}
+			
 			private void abortToOffline(Throwable t, boolean logThis) {
 				if (logThis) {
-					NeuronApplication.logError(LOG, "Neuron going offline due to exception in startup states", t);
+					NeuronApplication.logError(LOG, "Neuron set offline due to exception in startup states", t);
 				}
 				final int start;
 				synchronized(this) {
 					start = m_state.ordinal();
 					m_state = NeuronState.Offline;
-					StatusSystem.setStatus(this, m_state.toString());
+					StatusSystem.setStatus(this, StatusType.Offline, "Neuron set offline due to exception in startup states");
 				}
 				for(int i=start; i<m_stateMgt.length-1; i++) {
-					m_stateMgt[i].m_promise.tryFailure(t);
+					m_stateMgt[i].m_reachedStatePromise.tryFailure(t);
 				}
-				m_stateMgt[NeuronState.Offline.ordinal()].m_promise.trySuccess(this);
+				m_stateMgt[NeuronState.Offline.ordinal()].m_reachedStatePromise.trySuccess(this);
+			}
+			
+			private void initOffline() {
+				final int start;
+				synchronized(this) {
+					start = m_state.ordinal();
+					m_state = NeuronState.Offline;
+					StatusSystem.setStatus(this, StatusType.Offline, "registered");
+				}
+				Throwable dummy = new RuntimeException();
+				for(int i=start; i<m_stateMgt.length-1; i++) {
+					m_stateMgt[i].m_reachedStatePromise.tryFailure(dummy);
+				}
+				m_stateMgt[NeuronState.Offline.ordinal()].m_reachedStatePromise.trySuccess(this);
 			}
 
 			private StateManagement getStateManager(NeuronState state) {
@@ -333,15 +364,35 @@ public final class NeuronStateManager {
 						throw new IllegalArgumentException("Current state is " + m_state + ", cannot set state to " + state);
 					}
 					if (m_stateLockCount == 0) {
-						final Promise<NeuronRef> promise = m_stateMgt[state.ordinal()].m_promise;
-						m_state = state;
-						StatusSystem.setStatus(this, m_state.toString());
-						if (!promise.trySuccess(InstanceManagement.this)) {
-							LOG.fatal("Failed setting promise state to {}. This should never happen.", m_state);
-						}
+						setState0(state);
 					} else {
 						m_pendingState = state;
 					}
+				}
+			}
+			
+			private void setState0(NeuronState state) {
+				final Promise<NeuronRef> promise = m_stateMgt[state.ordinal()].m_reachedStatePromise;
+				m_state = state;
+				String reasonText = state.toString();
+				final StatusType st;
+				if (m_state.ordinal() < NeuronState.Online.ordinal()) {
+					st = StatusType.GoingOnline;
+				} else if (m_state.ordinal() == NeuronState.Online.ordinal()) {
+					st = StatusType.Online;
+					reasonText = "";
+				} else if (m_state.ordinal() == NeuronState.GoingOffline.ordinal()) {
+					st = StatusType.GoingOffline;
+					reasonText = "";
+				} else if (m_state.ordinal() < NeuronState.Offline.ordinal()) {
+					st = StatusType.GoingOffline;
+				} else {
+					st = StatusType.Offline;
+					reasonText = "";
+				}
+				StatusSystem.setStatus(this, st, reasonText);
+				if (!promise.trySuccess(InstanceManagement.this)) {
+					LOG.fatal("Failed setting promise state to {}. This should never happen.", m_state);
 				}
 			}
 
@@ -374,13 +425,8 @@ public final class NeuronStateManager {
 							m_lockTracking.remove(lockTrackingId);
 						}
 						if (m_pendingState != null) {
-							Promise<NeuronRef> promise = m_stateMgt[m_pendingState.ordinal()].m_promise;
-							m_state = m_pendingState;
+							setState0(m_pendingState);
 							m_pendingState = null;
-							StatusSystem.setStatus(InstanceManagement.this, m_state.toString());
-							if (!promise.trySuccess(InstanceManagement.this)) {
-								LOG.fatal("Failed setting promise state to {}. This should never happen.", m_state);
-							}
 						}
 					}
 				} finally {
@@ -389,7 +435,7 @@ public final class NeuronStateManager {
 			}
 			
 			@Override
-			List<NeuronLogEntry> getLog() {
+			public List<NeuronLogEntry> getLog() {
 				final ArrayList<NeuronLogEntry> out = new ArrayList<>(MAX_LOG_SIZE);
 				synchronized(m_log) {
 					for(NeuronLogEntry e : m_log) {
@@ -400,7 +446,7 @@ public final class NeuronStateManager {
 			}
 			
 			@Override
-			void log(Level level, StringBuilder sb) {
+			public void log(Level level, StringBuilder sb) {
 				synchronized(m_log) {
 					m_log.add(new NeuronLogEntry(level, sb.toString()));
 					while (m_log.size() > MAX_LOG_SIZE) {
@@ -410,16 +456,15 @@ public final class NeuronStateManager {
 			}
 
 			private final class StateManagement {
-				@SuppressWarnings("unused")
 				private final NeuronState m_state;
-				private final Promise<NeuronRef> m_promise = m_myEventLoop.newPromise();
+				private final Promise<NeuronRef> m_reachedStatePromise = m_myEventLoop.newPromise();
 				private LinkedList<INeuronStateListener> m_listeners = new LinkedList<>();
-				private INeuronStateListener m_systemPreListener;
-				private INeuronStateListener m_systemPostListener;
+				private INeuronStateSyncListener m_systemPreListener;
+				private INeuronStateSyncListener m_systemPostListener;
 				
 				StateManagement(NeuronState state) {
 					m_state = state;
-					m_promise.addListener((statePromise) -> {
+					m_reachedStatePromise.addListener((statePromise) -> {
 						final boolean successful = statePromise.isSuccess();
 						if (m_systemPreListener != null) {
 							m_systemPreListener.onStateReached(successful);
@@ -431,16 +476,29 @@ public final class NeuronStateManager {
 						}
 						final TSPromiseCombiner tsp = new TSPromiseCombiner();
 						for(INeuronStateListener listener : listeners) {
-							tsp.add(NeuronApplication.getTaskPool().submit(() -> {
+							if (listener instanceof INeuronStateSyncListener) {
+								tsp.add(NeuronApplication.getTaskPool().submit(() -> {
+									NeuronSystemTLS.add(InstanceManagement.this);
+									try {
+										((INeuronStateSyncListener)listener).onStateReached(successful);
+									} catch(Exception ex) {
+										NeuronApplication.logError(LOG, "Exception calling state listener", ex);
+									} finally {
+										NeuronSystemTLS.remove();
+									}
+								}));
+							} else {
+								Promise<Void> promise = m_myEventLoop.newPromise();
+								tsp.add(promise);
 								NeuronSystemTLS.add(InstanceManagement.this);
 								try {
-									listener.onStateReached(successful);
+									((INeuronStateAsyncListener)listener).onStateReached(successful, promise);
 								} catch(Exception ex) {
 									NeuronApplication.logError(LOG, "Exception calling state listener", ex);
 								} finally {
 									NeuronSystemTLS.remove();
 								}
-							}));
+							}
 						}
 						if (m_systemPostListener != null) {
 							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
@@ -453,15 +511,15 @@ public final class NeuronStateManager {
 					});
 				}
 				
-				void setPreListener(INeuronStateListener listener) {
+				void setPreListener(INeuronStateSyncListener listener) {
 					m_systemPreListener = listener;
 				}
 				
-				void setPostListener(INeuronStateListener listener) {
+				void setPostListener(INeuronStateSyncListener listener) {
 					m_systemPostListener = listener;
 				}
 				
-				void addListener(INeuronStateListener listener) {
+				void addListener(INeuronStateListener listener, NeuronState currentState) {
 					synchronized(this) {
 						// m_listeners goes null once the promise has been set complete and the callback has been called
 						// until that time, we can keep adding to it
@@ -470,17 +528,27 @@ public final class NeuronStateManager {
 							return;
 						}
 					}
+					// Cannot add async listeners for a state already reached.  These listeners'
+					// main purpose is to keep the state from switching until they trigger the
+					// promise
+					if (listener instanceof INeuronStateAsyncListener) {
+						throw new IllegalArgumentException("Cannot add async listener to state " + m_state + ", the neuron is already in the state " + currentState);
+					}
 					// Our promise listener has fired and will not call any additional listeners, call it on this thread
 					NeuronSystemTLS.add(InstanceManagement.this);
 					try {
-						listener.onStateReached(m_promise.isSuccess());
+						if (listener instanceof INeuronStateSyncListener) {
+							((INeuronStateSyncListener)listener).onStateReached(m_reachedStatePromise.isSuccess());
+//						} else {
+//							// The promise is ignored, since we already reached the state
+//							((INeuronStateAsyncListener)listener).onStateReached(m_reachedStatePromise.isSuccess(), m_myEventLoop.newPromise());
+						}
 					} catch(Exception ex) {
 						NeuronApplication.logError(LOG, "Exception calling state listener", ex);
 					} finally {
 						NeuronSystemTLS.remove();
 					}
 				}
-				
 				
 			}
 
@@ -503,13 +571,21 @@ public final class NeuronStateManager {
 				}
 
 				@Override
-				public void addStateListener(NeuronState state, INeuronStateListener listener) {
+				public void addStateListener(NeuronState state, INeuronStateSyncListener listener) {
 					if (!m_locked) {
 						throw new IllegalStateException("unlock() was already called");
 					}
-					getStateManager(state).addListener(listener);
+					getStateManager(state).addListener(listener, m_state);
 				}
 				
+				@Override
+				public void addStateAsyncListener(NeuronState state, INeuronStateAsyncListener listener) {
+					if (!m_locked) {
+						throw new IllegalStateException("unlock() was already called");
+					}
+					getStateManager(state).addListener(listener, m_state);
+				}
+
 				@Override
 				public boolean takeOffline() {
 					if (!m_locked) {

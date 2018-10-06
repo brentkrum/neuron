@@ -272,7 +272,7 @@ public final class BytePipeSystem
 				return null; // TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 				
 			case Chunk:
-				return null; // TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+				return new BytePipeChunkReader(ref, broker, config, (IBytePipeBufReaderCallback)callback);
 		}
 
 		throw new RuntimeException("This should never happen"); // Just to make Eclipse happy
