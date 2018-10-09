@@ -3,25 +3,24 @@ package com.neuron.core;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.neuron.core.BytePipeSystem.PipeBroker;
-import com.neuron.core.BytePipeSystem.ReadPipeType;
+import com.neuron.core.MessagePipeSystem.PipeBroker;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 
-import io.netty.buffer.ByteBuf;
+import io.netty.util.ReferenceCounted;
 
-class BytePipeChunkReader implements BytePipeSystem.IBytePipeReader
+class MessagePipeReader implements MessagePipeSystem.IMessagePipeReader
 {
-	private static final Logger LOG = LogManager.getLogger(BytePipeChunkReader.class);
+	private static final Logger LOG = LogManager.getLogger(MessagePipeReader.class);
 	
 	private final EventWorker m_worker;
 	private final NeuronRef m_owner;
-	private final IBytePipeBufReaderCallback m_callback;
+	private final IMessagePipeReaderCallback m_callback;
 	private final ObjectConfig m_config;
-	private volatile BytePipeSystem.PipeBroker m_broker;
+	private volatile PipeBroker m_broker;
 	
-	BytePipeChunkReader(NeuronRef ref, BytePipeSystem.PipeBroker broker, ObjectConfig config, IBytePipeBufReaderCallback callback) {
+	MessagePipeReader(NeuronRef ref, PipeBroker broker, ObjectConfig config, IMessagePipeReaderCallback callback) {
 		m_owner = ref;
 		m_broker = broker;
 		m_worker = new EventWorker(ref);
@@ -45,11 +44,6 @@ class BytePipeChunkReader implements BytePipeSystem.IBytePipeReader
 	}
 
 	@Override
-	public ReadPipeType pipeType() {
-		return ReadPipeType.AppendBuf;
-	}
-
-	@Override
 	public ObjectConfig config() {
 		return m_config;
 	}
@@ -61,7 +55,7 @@ class BytePipeChunkReader implements BytePipeSystem.IBytePipeReader
 	}
 
 	@Override
-	public boolean writeThrough(ByteBuf buf)
+	public boolean writeThrough(ReferenceCounted msg)
 	{
 		return false;
 	}
@@ -91,20 +85,20 @@ class BytePipeChunkReader implements BytePipeSystem.IBytePipeReader
 				return;
 			}
 			try {
-				final BytePipeSystem.PipeBroker broker = m_broker;
+				final PipeBroker broker = m_broker;
 				if (broker == null) {
 					return;
 				}
-				final ByteBuf buf = broker.dequeue();
-				if (buf == null) {
+				final ReferenceCounted msg = broker.dequeue();
+				if (msg == null) {
 					return;
 				}
 				try {
-					m_callback.onData(buf);
+					m_callback.onData(msg);
 				} catch(Throwable t) {
 					NeuronApplication.logError(LOG, "Uhandled exception in user provided callback", t);
 				}
-				buf.release();
+				msg.release();
 				requestMoreWork();
 				
 			} catch(Exception ex) {

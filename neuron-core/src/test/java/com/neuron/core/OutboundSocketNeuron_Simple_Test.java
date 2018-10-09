@@ -62,7 +62,11 @@ public class OutboundSocketNeuron_Simple_Test {
 				.childHandler(new ChannelInitializer<SocketChannel>() { // (4)
 					@Override
 					public void initChannel(SocketChannel ch) throws Exception {
+						LogManager.getLogger(OutboundSocketNeuron_Simple_Test.class).info("]]]]]]]] Connected {}", ch.remoteAddress().toString());
 						ch.pipeline().addLast(new MyChannelInboundHandlerAdapter());
+						ch.closeFuture().addListener((f) -> {
+							LogManager.getLogger(OutboundSocketNeuron_Simple_Test.class).info("]]]]]]]] Closed");
+						});
 					}
 				})
 				.option(ChannelOption.SO_BACKLOG, 128) // (5)
@@ -90,7 +94,7 @@ public class OutboundSocketNeuron_Simple_Test {
 
 		// Wait for test to complete
 		LogManager.getLogger(OutboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Wait while test runs");
-		assertTrue(m_testFuture.awaitUninterruptibly(5000));
+		assertTrue(m_testFuture.awaitUninterruptibly(15000));
 		
 		// Close server
 		LogManager.getLogger(OutboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Disconnect server");

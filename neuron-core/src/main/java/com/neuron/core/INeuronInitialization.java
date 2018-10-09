@@ -7,6 +7,9 @@ public interface INeuronInitialization extends INeuron
 	default void init(Promise<Void> promise) {
 		promise.setSuccess((Void)null);
 	}
+	default long initTimeoutInMS() {
+		return 1000;
+	}
 	
 	/**
 	 * This method is called in the case where the init method
@@ -27,6 +30,12 @@ public interface INeuronInitialization extends INeuron
 	
 	default void deinit(Promise<Void> promise) {
 		promise.setSuccess((Void)null);
+	}
+	default long deinitTimeoutInMS() {
+		return 5000;
+	}
+	
+	default void onDeinitTimeout() {
 	}
 	
 	default void connectResources() {
@@ -49,10 +58,4 @@ public interface INeuronInitialization extends INeuron
 	default void nowOnline() {
 	}
 	
-	default long initTimeoutInMS() {
-		return 1000;
-	}
-	default long deinitTimeoutInMS() {
-		return 5000;
-	}
 }

@@ -19,6 +19,7 @@ import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
+import com.neuron.utility.FastLinkedList;
 import com.neuron.utility.IntTrie;
 
 import io.netty.channel.EventLoop;
@@ -27,7 +28,7 @@ import io.netty.util.concurrent.Promise;
 import io.netty.util.concurrent.ScheduledFuture;
 
 public final class NeuronStateManager {
-	public enum NeuronState { NA, BeingCreated, Initializing, Connect, SystemOnline, Online, GoingOffline, Disconnecting, DeInitializing, SystemOffline, Offline};
+	public enum NeuronState { NA, BeingCreated, Initializing, Connect, SystemOnline, Online, GoingOffline, Disconnecting, Deinitializing, SystemOffline, Offline};
 
 	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.NeuronStateManager.lockLeakDetection", false);
 	private static final long DEFAULT_INIT_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateManager.defaultInitTimeout", 5000);
@@ -165,7 +166,7 @@ public final class NeuronStateManager {
 					mgt.onDeInitializing();
 				}
 			});
-			mgt.getStateManager(NeuronState.DeInitializing).setPostListener((boolean successful) -> {
+			mgt.getStateManager(NeuronState.Deinitializing).setPostListener((boolean successful) -> {
 				if (successful) {
 					mgt.setState(NeuronState.SystemOffline);
 				}
@@ -312,15 +313,18 @@ public final class NeuronStateManager {
 			
 			public void onDeInitializing() {
 				final Promise<Void> p = m_myEventLoop.newPromise();
-				p.addListener((f) -> {
-					setState(NeuronState.DeInitializing);
-				});
-				try(INeuronStateLock lock = m_current.lockState()) {
-					try {
-						m_neuron.deinit(p);
-					} catch(Exception ex) {
-						NeuronApplication.logError(LOG, "Unhandled exception in neuron.deinit()", ex);
-					}
+				NeuronSystemTLS.add(this);
+				try {
+					deinitializeNeuron(m_neuron, m_name, p);
+				} finally {
+					NeuronSystemTLS.remove();
+				}
+				if (p.isDone()) {
+					setState(NeuronState.Deinitializing);
+				} else {
+					p.addListener((f) -> {
+						setState(NeuronState.Deinitializing);
+					});
 				}
 			}
 			
@@ -458,7 +462,7 @@ public final class NeuronStateManager {
 			private final class StateManagement {
 				private final NeuronState m_state;
 				private final Promise<NeuronRef> m_reachedStatePromise = m_myEventLoop.newPromise();
-				private LinkedList<INeuronStateListener> m_listeners = new LinkedList<>();
+				private FastLinkedList<ListenerHolder> m_listeners = new FastLinkedList<>();
 				private INeuronStateSyncListener m_systemPreListener;
 				private INeuronStateSyncListener m_systemPostListener;
 				
@@ -469,13 +473,14 @@ public final class NeuronStateManager {
 						if (m_systemPreListener != null) {
 							m_systemPreListener.onStateReached(successful);
 						}
-						final LinkedList<INeuronStateListener> listeners;
+						final FastLinkedList<ListenerHolder> listeners;
 						synchronized(StateManagement.this) {
 							listeners = m_listeners;
 							m_listeners = null;
 						}
 						final TSPromiseCombiner tsp = new TSPromiseCombiner();
-						for(INeuronStateListener listener : listeners) {
+						listeners.forEach((holder) -> {
+							final INeuronStateListener listener = holder.m_listener;
 							if (listener instanceof INeuronStateSyncListener) {
 								tsp.add(NeuronApplication.getTaskPool().submit(() -> {
 									NeuronSystemTLS.add(InstanceManagement.this);
@@ -499,7 +504,8 @@ public final class NeuronStateManager {
 									NeuronSystemTLS.remove();
 								}
 							}
-						}
+							return true;
+						});
 						if (m_systemPostListener != null) {
 							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 							aggregatePromise.addListener((f) -> {
@@ -519,13 +525,14 @@ public final class NeuronStateManager {
 					m_systemPostListener = listener;
 				}
 				
-				void addListener(INeuronStateListener listener, NeuronState currentState) {
+				INeuronStateListenerRemoval addListener(INeuronStateListener listener, NeuronState currentState) {
 					synchronized(this) {
 						// m_listeners goes null once the promise has been set complete and the callback has been called
 						// until that time, we can keep adding to it
 						if (m_listeners != null) {
-							m_listeners.addFirst(listener);
-							return;
+							ListenerHolder h = new ListenerHolder(listener);
+							m_listeners.addFirst(h);
+							return h;
 						}
 					}
 					// Cannot add async listeners for a state already reached.  These listeners'
@@ -548,6 +555,30 @@ public final class NeuronStateManager {
 					} finally {
 						NeuronSystemTLS.remove();
 					}
+					return null;
+				}
+				
+				private final class ListenerHolder extends FastLinkedList.LLNode<ListenerHolder> implements INeuronStateListenerRemoval {
+					private final INeuronStateListener m_listener;
+					
+					ListenerHolder(INeuronStateListener listener) {
+						m_listener = listener;
+					}
+					
+					@Override
+					protected ListenerHolder getObject() {
+						return this;
+					}
+
+					@Override
+					public void remove() {
+						synchronized(StateManagement.this) {
+							if (m_listeners != null) {
+								m_listeners.remove(this);
+							}
+						}
+					}
+					
 				}
 				
 			}
@@ -571,19 +602,19 @@ public final class NeuronStateManager {
 				}
 
 				@Override
-				public void addStateListener(NeuronState state, INeuronStateSyncListener listener) {
+				public INeuronStateListenerRemoval addStateListener(NeuronState state, INeuronStateSyncListener listener) {
 					if (!m_locked) {
 						throw new IllegalStateException("unlock() was already called");
 					}
-					getStateManager(state).addListener(listener, m_state);
+					return getStateManager(state).addListener(listener, m_state);
 				}
 				
 				@Override
-				public void addStateAsyncListener(NeuronState state, INeuronStateAsyncListener listener) {
+				public INeuronStateListenerRemoval addStateAsyncListener(NeuronState state, INeuronStateAsyncListener listener) {
 					if (!m_locked) {
 						throw new IllegalStateException("unlock() was already called");
 					}
-					getStateManager(state).addListener(listener, m_state);
+					return getStateManager(state).addListener(listener, m_state);
 				}
 
 				@Override
@@ -660,4 +691,46 @@ public final class NeuronStateManager {
 			}
 		});
 	}
+	
+	private static void deinitializeNeuron(INeuronInitialization neuron, String name, final Promise<Void> deinitDone) {
+		try {
+			neuron.deinit(deinitDone);
+		} catch(Exception ex) {
+			NeuronApplication.logError(LOG, "Exception thrown from neuron.deinit()", ex);
+			deinitDone.tryFailure(ex);
+			return;
+		}
+		if (deinitDone.isDone()) {
+			return;
+		}
+		long timeoutInMS;
+		try {
+			timeoutInMS = neuron.deinitTimeoutInMS();
+			if (timeoutInMS <= 0) {
+				NeuronApplication.logError(LOG, "Deinit timeout from neuron '{}' is invalid (returned value was {} which is not allowed).  Using default value of {} instead.",  name, timeoutInMS, DEFAULT_INIT_TIMEOUT_IN_MS);
+				timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
+			}
+		} catch(Exception ex) {
+			timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
+			NeuronApplication.logError(LOG, "Failure getting Deinit timeout from neuron '{}',  Using default value of {} instead.", name, timeoutInMS, ex);
+		}
+		final long toMS = timeoutInMS;
+		final ScheduledFuture<?> initTimeout = NeuronApplication.getTaskPool().schedule(() -> {
+			deinitDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms de-initializing neuron '" + name + "'") );
+		}, timeoutInMS, TimeUnit.MILLISECONDS);
+		
+		NeuronRef ref = NeuronSystemTLS.currentNeuron();
+		deinitDone.addListener((Future<Void> f) -> {
+			initTimeout.cancel(false);
+			NeuronSystemTLS.add(ref);
+			try {
+				neuron.onDeinitTimeout();
+			} catch(Exception ex) {
+				NeuronApplication.logError(LOG, "Exception from neuron.onInitTimeout()", ex);
+			} finally {
+				NeuronSystemTLS.remove();
+			}
+		});
+	}
+	
 }

@@ -113,13 +113,22 @@ class BytePipeBufReader implements BytePipeSystem.IBytePipeReader
 					while(true) {
 						final ByteBuf buf = broker.dequeue();
 						if (buf == null) {
+							if (LOG.isTraceEnabled()) {
+								LOG.trace("dequeue null, breaking loop. readableBytes={}", readBuffer.readableBytes());
+							}
 							break;
+						}
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("dequeue {} bytes buffer, appending to readBuffer", buf.readableBytes());
 						}
 						readBuffer.writeBytes(buf);
 						buf.release();
 						// We can get stuck in this loop if the writer is sending constant data, make a cap so we can stop
 						// looping and actually process the data
 						if (readBuffer.readableBytes() > m_maxBufAvailableBytes) {
+							if (LOG.isTraceEnabled()) {
+								LOG.trace("readableBytes[{}] > m_maxBufAvailableBytes[{}]", readBuffer.readableBytes(), m_maxBufAvailableBytes);
+							}
 							// Since there could be more items in the broker, we need to run this worker again
 							requestMoreWork();
 							break;

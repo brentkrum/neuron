@@ -26,6 +26,11 @@ public final class TestUtils {
 			} else if (status instanceof CurrentTemplateStatus) {
 				sb.append(((CurrentTemplateStatus)status).templateRef.logString());
 			} else if (status instanceof CurrentHostStatus) {
+				if (((CurrentHostStatus)status).isInbound) {
+					sb.append("in:");
+				} else {
+					sb.append("out:");
+				}
 				sb.append(((CurrentHostStatus)status).hostAndPort);
 			}
 			sb.append("] ").append(status.status.toString()).append(": ").append(status.reasonText).append('\n');

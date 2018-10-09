@@ -12,27 +12,21 @@ import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.IntTrie;
 
-import io.netty.buffer.ByteBuf;
+import io.netty.util.ReferenceCounted;
 import io.netty.util.internal.PlatformDependent;
 
-public final class BytePipeSystem
+public final class MessagePipeSystem
 {
-	public static final String AppendBufConfig_MaxBufAvailableBytes = "maxBufAvailableBytes";
+	private static final Logger LOG = LogManager.getLogger(MessagePipeSystem.class);
 	
-	private static final Logger LOG = LogManager.getLogger(BytePipeSystem.class);
-	
-	public enum ReadPipeType { AppendBuf, Stream, Chunk };
-//	public enum WritePipeType { ByteBuf, Stream };
-	public static final String pipeBrokerConfig_MaxPipeByteSize = "maxPipeByteSize";
 	public static final String pipeBrokerConfig_MaxPipeMsgCount = "maxPipeMsgCount";
 
-	private static final int DEFAULT_PIPE_MSG_COUNT = Config.getFWInt("core.BytePipeSystem.defaultMaxPipeMsgCount", Integer.valueOf(32));
-	private static final int DEFAULT_PIPE_BYTE_SIZE = Config.getFWInt("core.BytePipeSystem.defaultMaxPipeByteSize", Integer.valueOf(32*1024));
+	private static final int DEFAULT_PIPE_MSG_COUNT = Config.getFWInt("core.MessagePipeSystem.defaultMaxPipeMsgCount", Integer.valueOf(32));
 	private static final ReadWriteLock m_brokerLock = new ReentrantReadWriteLock(true);
 	private static final CharSequenceTrie<PipeBroker> m_pipeBrokerByName = new CharSequenceTrie<>();
 	private static final IntTrie<InstancePipeBrokers> m_brokerByGen = new IntTrie<>();
 
-	private BytePipeSystem() {
+	private MessagePipeSystem() {
 	}
 
 	static void register() {
@@ -87,70 +81,38 @@ public final class BytePipeSystem
 		}
 	}
 
-	public static void readFromPipeAsAppendBuf(String declaringNeuronInstanceName, String pipeName, ObjectConfig readConfig, IBytePipeBufReaderCallback callback) {
+	public static void readFromPipe(String pipeName, ObjectConfig readConfig, IMessagePipeReaderCallback callback) {
 		NeuronSystemTLS.validateNeuronAwareThread();
-		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
-		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
+		final NeuronRef currentNeuronRef = NeuronSystemTLS.currentNeuron();
+		try(INeuronStateLock lock = currentNeuronRef.lockState()) {
 			NeuronSystemTLS.validateInNeuronConnectResources(lock);
-			_readFromPipe(currentInstanceRef, declaringNeuronInstanceName, pipeName, ReadPipeType.AppendBuf, readConfig, callback);
+			_readFromPipe(currentNeuronRef, currentNeuronRef.name(), pipeName, readConfig, callback);
 		}
 	}
-	public static void readFromPipeAsChunk(String declaringNeuronInstanceName, String pipeName, ObjectConfig readConfig, IBytePipeBufReaderCallback callback) {
+	
+	public static void readFromPipe(String declaringNeuronInstanceName, String pipeName, ObjectConfig readConfig, IMessagePipeReaderCallback callback) {
 		NeuronSystemTLS.validateNeuronAwareThread();
-		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
-		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
+		final NeuronRef currentNeuronRef = NeuronSystemTLS.currentNeuron();
+		try(INeuronStateLock lock = currentNeuronRef.lockState()) {
 			NeuronSystemTLS.validateInNeuronConnectResources(lock);
-			_readFromPipe(currentInstanceRef, declaringNeuronInstanceName, pipeName, ReadPipeType.Chunk, readConfig, callback);
+			_readFromPipe(currentNeuronRef, declaringNeuronInstanceName, pipeName, readConfig, callback);
 		}
 	}
-	public static void readFromPipeAsStream(String declaringNeuronInstanceName, String pipeName, ObjectConfig readConfig, IBytePipeStreamReaderCallback callback) {
-		NeuronSystemTLS.validateNeuronAwareThread();
-		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
-		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
-			NeuronSystemTLS.validateInNeuronConnectResources(lock);
-			_readFromPipe(currentInstanceRef, declaringNeuronInstanceName, pipeName, ReadPipeType.Stream, readConfig, callback);
-		}
-	}
-
-	public static void readFromPipeAsAppendBuf(String pipeName, ObjectConfig readConfig, IBytePipeBufReaderCallback callback) {
-		NeuronSystemTLS.validateNeuronAwareThread();
-		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
-		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
-			NeuronSystemTLS.validateInNeuronConnectResources(lock);
-			_readFromPipe(currentInstanceRef, currentInstanceRef.name(), pipeName, ReadPipeType.AppendBuf, readConfig, callback);
-		}
-	}
-	public static void readFromPipeAsChunk(String pipeName, ObjectConfig readConfig, IBytePipeBufReaderCallback callback) {
-		NeuronSystemTLS.validateNeuronAwareThread();
-		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
-		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
-			NeuronSystemTLS.validateInNeuronConnectResources(lock);
-			_readFromPipe(currentInstanceRef, currentInstanceRef.name(), pipeName, ReadPipeType.Chunk, readConfig, callback);
-		}
-	}
-	public static void readFromPipeAsStream(String pipeName, ObjectConfig readConfig, IBytePipeStreamReaderCallback callback) {
-		NeuronSystemTLS.validateNeuronAwareThread();
-		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
-		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
-			NeuronSystemTLS.validateInNeuronConnectResources(lock);
-			_readFromPipe(currentInstanceRef, currentInstanceRef.name(), pipeName, ReadPipeType.Stream, readConfig, callback);
-		}
-	}
-
-	private static void _readFromPipe(final NeuronRef currentNeuronRef, String declaringNeuronInstanceName, String pipeName, ReadPipeType pipeType, ObjectConfig readConfig, Object callback) {
+	
+	public static void _readFromPipe(final NeuronRef currentNeuronRef, String declaringNeuronInstanceName, String pipeName, ObjectConfig readConfig, IMessagePipeReaderCallback callback) {
 		final String fqpn = createFQPN(declaringNeuronInstanceName, pipeName);
 		
 		m_brokerLock.writeLock().lock();
 		try {
 			PipeBroker broker = m_pipeBrokerByName.get(fqpn);
 			if (broker instanceof CreatedPipeBroker) {
-				((CreatedPipeBroker)broker).validateAndSetNewReader( createReader(currentNeuronRef, broker, pipeType, readConfig, callback) );
+				((CreatedPipeBroker)broker).validateAndSetNewReader( new MessagePipeReader(currentNeuronRef, broker, readConfig, callback) );
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Adding reader to existing pipe broker {}", fqpn);
 				}
 
 			} else if (broker == null) {
-				final ReadPlaceholderPipeBroker placeholderBroker = new ReadPlaceholderPipeBroker(fqpn, createReader(currentNeuronRef, null, pipeType, readConfig, callback));
+				final ReadPlaceholderPipeBroker placeholderBroker = new ReadPlaceholderPipeBroker(fqpn, new MessagePipeReader(currentNeuronRef, null, readConfig, callback));
 				m_pipeBrokerByName.addOrFetch(fqpn, placeholderBroker);
 				broker = placeholderBroker;
 				if (LOG.isDebugEnabled()) {
@@ -177,23 +139,7 @@ public final class BytePipeSystem
 		
 	}
 		
-//	public static IPipeWriterContext writeToPipeWithBuf(String declaringNeuronInstanceName, String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
-//		NeuronSystem.validateInNeuronConnectResources();
-//		return _writeToPipe(declaringNeuronInstanceName, pipeName, WritePipeType.ByteBuf, writeConfig, listener);
-//	}
-//	public static IPipeWriterContext writeToPipeWithBuf(String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
-//		NeuronSystem.validateInNeuronConnectResources();
-//		return _writeToPipe(NeuronSystem.getCurrentInstanceRef().name(), pipeName, WritePipeType.ByteBuf, writeConfig, listener);
-//	}
-//	public static IPipeWriterContext writeToPipeWithStream(String declaringNeuronInstanceName, String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
-//		NeuronSystem.validateInNeuronConnectResources();
-//		return _writeToPipe(declaringNeuronInstanceName, pipeName, WritePipeType.Stream, writeConfig, listener);
-//	}
-//	public static IPipeWriterContext writeToPipeWithStream(String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
-//		NeuronSystem.validateInNeuronConnectResources();
-//		return _writeToPipe(NeuronSystem.getCurrentInstanceRef().name(), pipeName, WritePipeType.Stream, writeConfig, listener);
-//	}
-	public static IPipeWriterContext writeToPipe(String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
+	public static IPipeWriterContext writeToPipe(String pipeName, ObjectConfig writeConfig, IMessagePipeWriterListener listener) {
 		NeuronSystemTLS.validateNeuronAwareThread();
 		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
 		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
@@ -201,7 +147,7 @@ public final class BytePipeSystem
 			return _writeToPipe(currentInstanceRef, currentInstanceRef.name(), pipeName, writeConfig, listener);
 		}
 	}
-	public static IPipeWriterContext writeToPipe(String declaringNeuronInstanceName, String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
+	public static IPipeWriterContext writeToPipe(String declaringNeuronInstanceName, String pipeName, ObjectConfig writeConfig, IMessagePipeWriterListener listener) {
 		NeuronSystemTLS.validateNeuronAwareThread();
 		final NeuronRef currentInstanceRef = NeuronSystemTLS.currentNeuron();
 		try(INeuronStateLock lock = currentInstanceRef.lockState()) {
@@ -209,22 +155,22 @@ public final class BytePipeSystem
 			return _writeToPipe(currentInstanceRef, declaringNeuronInstanceName, pipeName, writeConfig, listener);
 		}
 	}
-	private static IPipeWriterContext _writeToPipe(final NeuronRef currentNeuronRef, String declaringNeuronInstanceName, String pipeName, ObjectConfig writeConfig, IBytePipeWriterListener listener) {
+	private static IPipeWriterContext _writeToPipe(final NeuronRef currentNeuronRef, String declaringNeuronInstanceName, String pipeName, ObjectConfig writeConfig, IMessagePipeWriterListener listener) {
 		final String fqpn = createFQPN(declaringNeuronInstanceName, pipeName);
 		
-		final BytePipeWriterContext writerContext;
+		final MessagePipeWriterContext writerContext;
 		m_brokerLock.writeLock().lock();
 		try {
 			PipeBroker broker = m_pipeBrokerByName.get(fqpn);
 			if (broker instanceof CreatedPipeBroker) {
-				writerContext = new BytePipeWriterContext(currentNeuronRef, broker, listener, writeConfig);
+				writerContext = new MessagePipeWriterContext(fqpn, currentNeuronRef, broker, listener, writeConfig);
 				((CreatedPipeBroker)broker).validateAndSetNewWriter(writerContext);
 				if (LOG.isDebugEnabled()) {
 					LOG.debug("Adding writer to existing pipe broker {}", fqpn);
 				}
 				
 			} else if (broker == null) {
-				writerContext = new BytePipeWriterContext(currentNeuronRef, broker, listener, writeConfig);
+				writerContext = new MessagePipeWriterContext(fqpn, currentNeuronRef, broker, listener, writeConfig);
 				final WritePlaceholderPipeBroker nullBroker = new WritePlaceholderPipeBroker(fqpn, writerContext );
 				m_pipeBrokerByName.addOrFetch(fqpn, nullBroker);
 				broker = nullBroker;
@@ -265,38 +211,18 @@ public final class BytePipeSystem
 		return declaringNeuronInstanceName + ":" + pipeName;
 	}
 	
-	private static IBytePipeReader createReader(NeuronRef ref, PipeBroker broker, ReadPipeType pipeType, ObjectConfig config, Object callback) {
-		switch(pipeType) {
-			case AppendBuf:
-				return new BytePipeBufReader(ref, broker, config, (IBytePipeBufReaderCallback)callback);
-
-			case Stream:
-				return null; // TODO <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-				
-			case Chunk:
-				return new BytePipeChunkReader(ref, broker, config, (IBytePipeBufReaderCallback)callback);
-		}
-
-		throw new RuntimeException("This should never happen"); // Just to make Eclipse happy
-	}
-//	
-//	private static IBytePipeWriter createWriter(NeuronRef context, PipeBroker broker, WritePipeType pipeType, ObjectConfig config, Object listener) {
-//		return new BytePipeBufWriterContext(context, broker, pipeType, (IBytePipeWriterEventListener)listener, config);
-//	}
-	
-	interface IBytePipeReader {
+	interface IMessagePipeReader {
 		public enum Event { DataReady };
 		NeuronRef owner();
-		boolean writeThrough(ByteBuf buf);
+		boolean writeThrough(ReferenceCounted buf);
 		void onEvent(Event event);
 		void replaceBroker(PipeBroker newBroker);
 		void close();
-		ReadPipeType pipeType();
 		ObjectConfig config();
 		Object callback();
 	}
 	
-	interface IBytePipeWriter {
+	interface IMessagePipeWriter {
 		public enum Event { PipeEmpty, PipeWriteable, ReaderOnline };
 		NeuronRef owner();
 		void onEvent(Event event);
@@ -318,15 +244,15 @@ public final class BytePipeSystem
 		}
 		
 		abstract NeuronRef owner();
-		abstract ByteBuf dequeue();
-		abstract boolean tryWrite(ByteBuf buf);
+		abstract ReferenceCounted dequeue();
+		abstract boolean tryWrite(ReferenceCounted buf);
 		abstract void close();
 	}
 	
 	static final class ReadPlaceholderPipeBroker extends PipeBroker {
-		private final IBytePipeReader m_reader;
+		private final IMessagePipeReader m_reader;
 		
-		private ReadPlaceholderPipeBroker(String pipeName, IBytePipeReader reader) {
+		private ReadPlaceholderPipeBroker(String pipeName, IMessagePipeReader reader) {
 			super(pipeName);
 			m_reader = reader;
 			m_reader.replaceBroker(this);
@@ -343,22 +269,22 @@ public final class BytePipeSystem
 		}
 		
 		@Override
-		ByteBuf dequeue()
+		ReferenceCounted dequeue()
 		{
 			return null;
 		}
 
 		@Override
-		boolean tryWrite(ByteBuf buf)
+		boolean tryWrite(ReferenceCounted buf)
 		{
 			return false;
 		}
 	}
 	
 	static final class WritePlaceholderPipeBroker extends PipeBroker {
-		private final IBytePipeWriter m_writeContext;
+		private final IMessagePipeWriter m_writeContext;
 		
-		private WritePlaceholderPipeBroker(String pipeName, IBytePipeWriter writeContext) {
+		private WritePlaceholderPipeBroker(String pipeName, IMessagePipeWriter writeContext) {
 			super(pipeName);
 			m_writeContext = writeContext;
 			m_writeContext.replaceBroker(this);
@@ -375,58 +301,27 @@ public final class BytePipeSystem
 		}
 
 		@Override
-		ByteBuf dequeue()
+		ReferenceCounted dequeue()
 		{
 			return null;
 		}
 
 		@Override
-		boolean tryWrite(ByteBuf buf)
+		boolean tryWrite(ReferenceCounted buf)
 		{
 			return false;
 		}
 	}
-
-//	static final class NullPipeBroker extends PipeBroker {
-//		private final NeuronRef m_owner;
-//		private final IBytePipeWriter m_writer;
-//		private final IBytePipeReader m_reader;
-//		
-//		NullPipeBroker(String fqpn, IBytePipeWriter writer) {
-//			super(fqpn);
-//			m_owner = writer.owner();
-//			m_writer = writer;
-//			m_reader = null;
-//		}
-//		NullPipeBroker(String fqpn, IBytePipeReader reader) {
-//			super(fqpn);
-//			m_owner = reader.owner();
-//			m_writer = null;
-//			m_reader = reader;
-//		}
-//		
-//		@Override
-//		ByteBuf dequeue() {
-//			return null;
-//		}
-//		@Override
-//		boolean tryWrite(ByteBuf buf) {
-//			return false;
-//		}
-//	}
 	
 	static final class CreatedPipeBroker extends PipeBroker {
-		private final int m_pipeByteMax;
 		private final NeuronRef m_owner;
-		private final ByteBuf[] m_queue;
-		private final int m_queueLen;
-		private IBytePipeWriter m_writer;
-		private IBytePipeReader m_reader;
+		private final ReferenceCounted[] m_queue;
+		private IMessagePipeWriter m_writer;
+		private IMessagePipeReader m_reader;
 		private int m_head; // Add to Head
 		private int m_tail; // Remove from tail
 		private boolean m_full;
 		private int m_count;
-		private int m_queueSize;
 		
 		private CreatedPipeBroker(String pipeName, ObjectConfig config, NeuronRef owner, WritePlaceholderPipeBroker placeholder) {
 			this(pipeName, config, owner);
@@ -443,9 +338,8 @@ public final class BytePipeSystem
 		private CreatedPipeBroker(String pipeName, ObjectConfig config, NeuronRef owner) {
 			super(pipeName);
 			m_owner = owner;
-			m_pipeByteMax = config.getInteger(BytePipeSystem.pipeBrokerConfig_MaxPipeByteSize, DEFAULT_PIPE_BYTE_SIZE);
-			m_queueLen = config.getInteger(BytePipeSystem.pipeBrokerConfig_MaxPipeMsgCount, DEFAULT_PIPE_MSG_COUNT);
-			m_queue = new ByteBuf[m_queueLen];
+			final int pipeMsgCountMax = config.getInteger(MessagePipeSystem.pipeBrokerConfig_MaxPipeMsgCount, DEFAULT_PIPE_MSG_COUNT);
+			m_queue = new ReferenceCounted[pipeMsgCountMax];
 		}
 
 		@Override
@@ -484,7 +378,7 @@ public final class BytePipeSystem
 			return placeholder;
 		}
 		
-		synchronized void validateAndSetNewReader(IBytePipeReader reader)
+		synchronized void validateAndSetNewReader(IMessagePipeReader reader)
 		{
 			if (m_reader != null) {
 				final UnsupportedOperationException ex = new UnsupportedOperationException();
@@ -500,20 +394,20 @@ public final class BytePipeSystem
 							if (LOG.isTraceEnabled()) {
 								LOG.trace("Pipe {} sending DataReady event to reader", m_pipeName);
 							}
-							m_reader.onEvent(IBytePipeReader.Event.DataReady);
+							m_reader.onEvent(IMessagePipeReader.Event.DataReady);
 						}
 						if (m_writer != null) {
 							if (LOG.isTraceEnabled()) {
 								LOG.trace("Pipe {} sending ReaderOnline event to writer", m_pipeName);
 							}
-							m_writer.onEvent(IBytePipeWriter.Event.ReaderOnline);
+							m_writer.onEvent(IMessagePipeWriter.Event.ReaderOnline);
 						}
 					}
 				});
 			}
 		}
 		
-		synchronized void validateAndSetNewWriter(IBytePipeWriter writer)
+		synchronized void validateAndSetNewWriter(IMessagePipeWriter writer)
 		{
 			if (m_writer != null) {
 				final UnsupportedOperationException ex = new UnsupportedOperationException();
@@ -526,12 +420,12 @@ public final class BytePipeSystem
 				if (LOG.isTraceEnabled()) {
 					LOG.trace("Pipe {} sending PipeEmpty event to writer", m_pipeName);
 				}
-				m_writer.onEvent(IBytePipeWriter.Event.PipeEmpty);
+				m_writer.onEvent(IMessagePipeWriter.Event.PipeEmpty);
 			} else if (!m_full) {
 				if (LOG.isTraceEnabled()) {
 					LOG.trace("Pipe {} sending PipeWriteable event to writer", m_pipeName);
 				}
-				m_writer.onEvent(IBytePipeWriter.Event.PipeWriteable);
+				m_writer.onEvent(IMessagePipeWriter.Event.PipeWriteable);
 			}
 		}
 		
@@ -542,7 +436,7 @@ public final class BytePipeSystem
 			for(int i=0; i<m_count; i++) {
 				m_queue[m_tail].release();
 				m_queue[m_tail++] = null;
-				if (m_tail == m_queueLen) {
+				if (m_tail == m_queue.length) {
 					m_tail = 0;
 				}
 			}
@@ -550,91 +444,69 @@ public final class BytePipeSystem
 			m_tail = 0;
 			m_full = false;
 			m_count = 0;
-			m_queueSize = 0;
-			// TODO send an event
+			// TODO send an event?
 		}
 		
 		synchronized void closeWriter() {
 			m_writer.close();
 			m_writer = null;
-			// TODO send an event and the reader can clear/drain the queue
+			// TODO send an event and the reader can clear/drain the queue?
 		}
 		
-		private void enqueue0(ByteBuf buf) {
-			m_queue[m_head++] = buf;
-			if (m_head == m_queueLen) {
+		private void enqueue0(ReferenceCounted msg) {
+			m_queue[m_head++] = msg;
+			if (m_head == m_queue.length) {
 				m_head = 0;
 			}
 			m_count++;
-			m_queueSize += buf.readableBytes();
-			if (m_count == m_queueLen) {
+			if (m_count == m_queue.length) {
 				m_full = true;
-			}
-			else if (m_queueSize >= m_pipeByteMax) {
-				m_full = true;
-			}
-			if (LOG.isTraceEnabled()) {
-				LOG.trace("Pipe {} enqueue0() m_count={} m_queueSize={} m_full={} m_head={} m_tail={}", m_pipeName, m_count, m_queueSize, m_full, m_head, m_tail);
 			}
 		}
 		
-		private ByteBuf dequeue0() {
+		private ReferenceCounted dequeue0() {
 			if (m_count == 0) {
 				return null;
 			}
-			final ByteBuf buf = m_queue[m_tail];
+			final ReferenceCounted buf = m_queue[m_tail];
 			m_queue[m_tail++] = null; // Remove it so it can be garbage collected
-			if (m_tail == m_queueLen) {
+			if (m_tail == m_queue.length) {
 				m_tail = 0;
 			}
-			if (m_full && m_queueSize < m_pipeByteMax) {
-				m_full = false;
-			}
+			m_full = false;
 			m_count--;
-			m_queueSize -= buf.readableBytes();
-			if (LOG.isTraceEnabled()) {
-				LOG.trace("Pipe {} dequeue0() m_count={} m_queueSize={} m_full={} m_head={} m_tail={}", m_pipeName, m_count, m_queueSize, m_full, m_head, m_tail);
-			}
-			if (m_count == 0 && m_queueSize != 0) {
-				m_queueSize = 0;
-				if (m_writer == null) {
-					LOG.error("Pipe [{}] queue size and count are not synchronized.  Most likely this is the fault of a writer submitting a buffer and then using the submitted buffer again. The errant writer is no longer attached.");
-				} else {
-					LOG.error("Pipe [{}] queue size and count are not synchronized.  Most likely this is the fault of a writer submitting a buffer and then using the submitted buffer again. The errant writer may or may not have been {}", m_pipeName, m_writer.owner().logString());
-				}
-			}
 			return buf;
 		}
 		
-		synchronized ByteBuf dequeue() {
+		synchronized ReferenceCounted dequeue() {
 			// The reader was removed, but due to race conditions they
 			// still had a cached local copy
 			if (m_reader == null) {
 				return null;
 			}
 			final boolean wasFull = m_full;
-			final ByteBuf buf = dequeue0();
-			if (buf != null && m_writer != null) {
+			final ReferenceCounted msg = dequeue0();
+			if (msg != null && m_writer != null) {
 				if (m_count == 0) {
 					if (LOG.isTraceEnabled()) {
 						LOG.trace("Pipe {} dequeue() sending PipeEmpty event to writer", m_pipeName);
 					}
 					// PipeEmpty event happens, well, when the pipe becomes empty
-					m_writer.onEvent(IBytePipeWriter.Event.PipeEmpty);
+					m_writer.onEvent(IMessagePipeWriter.Event.PipeEmpty);
 				} else if (wasFull && m_full != wasFull) {
 					if (LOG.isTraceEnabled()) {
 						LOG.trace("Pipe {} dequeue() sending PipeWriteable event to writer", m_pipeName);
 					}
 					// PipeWriteable event happens when the pipe was full and no longer is
-					m_writer.onEvent(IBytePipeWriter.Event.PipeWriteable);
+					m_writer.onEvent(IMessagePipeWriter.Event.PipeWriteable);
 				}
 			}
-			return buf;
+			return msg;
 		}
 		
-		synchronized boolean tryWrite(ByteBuf buf) {
-			if (buf == null) {
-				throw new IllegalArgumentException("buf cannot be null");
+		synchronized boolean tryWrite(ReferenceCounted msg) {
+			if (msg == null) {
+				throw new IllegalArgumentException("msg cannot be null");
 			}
 			// The writer was removed, but due to race conditions they
 			// still had a cached local copy
@@ -645,19 +517,19 @@ public final class BytePipeSystem
 				return false;
 			}
 			if (m_reader == null) {
-				buf.release();
+				msg.release();
 				return true;
 			}
 			if (m_count == 0) {
-				if (!m_reader.writeThrough(buf)) {
-					enqueue0(buf);
+				if (!m_reader.writeThrough(msg)) {
+					enqueue0(msg);
 				}
 				if (LOG.isTraceEnabled()) {
 					LOG.trace("Pipe {} tryWrite() sending DataReady event to reader", m_pipeName);
 				}
-				m_reader.onEvent(IBytePipeReader.Event.DataReady);
+				m_reader.onEvent(IMessagePipeReader.Event.DataReady);
 			} else {
-				enqueue0(buf);
+				enqueue0(msg);
 			}
 			return true;
 		}
@@ -695,7 +567,7 @@ public final class BytePipeSystem
 									LOG.debug("Pipe broker {} only has owner attached, closing broker", fqpn);
 								}
 								// The non-owner reader or writer is gone, we can just remove it
-								BytePipeSystem.m_pipeBrokerByName.remove(fqpn);
+								MessagePipeSystem.m_pipeBrokerByName.remove(fqpn);
 								cpb.close();
 								
 							} else {
@@ -705,7 +577,7 @@ public final class BytePipeSystem
 									LOG.debug("Detaching {} placeholder for neuron {} from non-owned pipe broker {}", placeholderBroker.getClass().getSimpleName(), placeholderBroker.owner().logString(), fqpn);
 								}
 								addOrReplaceBrokerInInstance0(placeholderBroker.owner(), placeholderBroker);
-								BytePipeSystem.m_pipeBrokerByName.replace(fqpn, placeholderBroker);
+								MessagePipeSystem.m_pipeBrokerByName.replace(fqpn, placeholderBroker);
 								cpb.close();
 							}
 						} else {
@@ -720,7 +592,7 @@ public final class BytePipeSystem
 						if (LOG.isDebugEnabled()) {
 							LOG.debug("Removing {} placeholder for pipe {}", broker.getClass().getSimpleName(), fqpn);
 						}
-						BytePipeSystem.m_pipeBrokerByName.remove(fqpn);
+						MessagePipeSystem.m_pipeBrokerByName.remove(fqpn);
 						((PipeBroker)broker).close();
 	
 					}
@@ -737,36 +609,7 @@ public final class BytePipeSystem
 	}
 	
 	public interface IPipeWriterContext {
-		/**
-		 * Data written to the BytePipeBufWriter returned by this method will not
-		 * be written until either the tryClose or close() method is called.
-		 * It is not intended to be long lived, but intended to be opened
-		 * written to and closed for every "packet" or "set" of data you
-		 * want to write.
-		 * 
-		 * If the neuron for this pipe goes offline, the pipe broker will be
-		 * disconnected and bytes being written to this writer will be silently
-		 * discarded.
-		 * 
-		 * @return
-		 */
-		BytePipeBufWriter openBufWriter();
-		
-		/**
-		 * Data written to the BytePipeStreamWriter returned by this method will not
-		 * be written until either the tryClose or close() method is called.
-		 * It is not intended to be long lived, but intended to be opened
-		 * written to and closed for every "packet" or "set" of data you
-		 * want to write.
-		 * 
-		 * If the neuron for this pipe goes offline, the pipe broker will be
-		 * disconnected and bytes being written to this writer will be silently
-		 * discarded.
-		 * 
-		 * @return
-		 */
-		BytePipeStreamWriter openStreamWriter();
-		
+		String name();
 		/**
 		 * This just takes the passed in buffer and submits it to the pipe broker.
 		 * If the broker queue is full, it will return false
@@ -774,21 +617,16 @@ public final class BytePipeSystem
 		 * @param buf
 		 * @return
 		 */
-		boolean offerBuf(ByteBuf buf);
+		boolean offer(ReferenceCounted msg);
 		
 	}
 	
-//	public interface IBytePipeWriterEventListener {
-//		public enum Event { PipeEmpty, PipeWriteable };
-//		void onEvent(Event event, IPipeWriterContext context);
-//	}
-
 	private static class Registrant implements INeuronApplicationSystem {
 
 		@Override
 		public String systemName()
 		{
-			return "BytePipeSystem";
+			return "MessagePipeSystem";
 		}
 		
 	}

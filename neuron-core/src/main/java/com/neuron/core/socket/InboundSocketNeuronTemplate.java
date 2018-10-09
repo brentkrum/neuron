@@ -1,6 +1,5 @@
 package com.neuron.core.socket;
 
-import com.neuron.core.Config;
 import com.neuron.core.DefaultNeuronTemplateBase;
 import com.neuron.core.INeuronInitialization;
 import com.neuron.core.NeuronApplication;
@@ -11,14 +10,13 @@ import com.neuron.core.TemplateRef;
 import io.netty.util.concurrent.Future;
 import io.netty.util.internal.ObjectUtil;
 
-public class OutboundSocketNeuronTemplate extends DefaultNeuronTemplateBase
+public class InboundSocketNeuronTemplate extends DefaultNeuronTemplateBase
 {
-	public static final String Config_InetHost = "host";
 	public static final String Config_Port = "port";
-	public static final String Config_RetryDelayMS = "retryDelay";
-	private static final Long DEFAULT_RETRY_DELAY_MS = Config.getFWLong("core.OutboundSocketNeuronTemplate.defaultRetryDelayMS", Long.valueOf(15000));
+	public static final String Config_InPipeMaxPipeMsgCount = "inPipeMaxMsgCount";
+	public static final String Config_OutPipeMaxPipeMsgCount = "outPipeMaxMsgCount";
 			
-	public OutboundSocketNeuronTemplate(TemplateRef ref) {
+	public InboundSocketNeuronTemplate(TemplateRef ref) {
 		super(ref);
 	}
 
@@ -37,14 +35,9 @@ public class OutboundSocketNeuronTemplate extends DefaultNeuronTemplateBase
 	@Override
 	public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config)
 	{
-		String inetHost = config.getString(Config_InetHost, null);
 		Integer port = config.getInteger(Config_Port, null);
-		Long retryDelayMS = config.getLong(Config_RetryDelayMS, DEFAULT_RETRY_DELAY_MS);
-		
-		ObjectUtil.checkNotNull(inetHost, "Neuron config item Config_InetHost is either missing or invalid");
 		ObjectUtil.checkNotNull(port, "Neuron config item Config_Port is either missing or invalid");
-		
-		return new OutboundSocketNeuron(ref, inetHost, port, retryDelayMS);
+		return new InboundSocketNeuron(ref, port, config);
 	}
 
 }

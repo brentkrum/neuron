@@ -174,6 +174,9 @@ public final class Config {
 	public static Long getFWLong(final String key, final long min, final long max, final Long defaultValue) {
 		return getLong(Config.FW_PREFIX + key, min, max, defaultValue, false);
 	}
+	public static Long getFWLong(final String key, final Long defaultValue) {
+		return getLong(Config.FW_PREFIX + key, Long.MIN_VALUE, Long.MAX_VALUE, defaultValue, false);
+	}
 	public static Long getLong(final String key, final long min, final long max, final Long defaultValue) {
 		return getLong(key, min, max, defaultValue, false);
 	}

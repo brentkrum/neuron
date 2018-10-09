@@ -82,7 +82,21 @@ public class StatusSystem
 		synchronized(m_hostLock) {
 			HostStatusHolder h = m_hostStatusTrie.get(hostAndPort);
 			if (h == null) {
-				h = new HostStatusHolder(hostAndPort);
+				h = new HostStatusHolder(false, hostAndPort);
+				m_hostStatusTrie.addOrFetch(hostAndPort, h);
+			}
+			h.addStatusTrail(status, reasonText);
+		}
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("{}: {} {}", hostAndPort, status, reasonText);
+		}
+	}
+
+	public static void setInboundStatus(String hostAndPort, StatusType status, String reasonText) {
+		synchronized(m_hostLock) {
+			HostStatusHolder h = m_hostStatusTrie.get(hostAndPort);
+			if (h == null) {
+				h = new HostStatusHolder(true, hostAndPort);
 				m_hostStatusTrie.addOrFetch(hostAndPort, h);
 			}
 			h.addStatusTrail(status, reasonText);
@@ -171,10 +185,12 @@ public class StatusSystem
 	}
 	
 	public static class CurrentHostStatus extends CurrentStatus {
+		public final boolean isInbound;
 		public final String hostAndPort;
 		
-		CurrentHostStatus(long timestamp, StatusType status, String reasonText, String hostAndPort) {
+		CurrentHostStatus(long timestamp, StatusType status, String reasonText, boolean isInbound, String hostAndPort) {
 			super(timestamp, status, reasonText);
+			this.isInbound = isInbound;
 			this.hostAndPort = hostAndPort;
 		}
 		
@@ -228,9 +244,11 @@ public class StatusSystem
 	}
 	
 	private static class HostStatusHolder extends StatusHolder{
+		private final boolean m_isInbound;
 		private final String m_hostAndPort;
 		
-		HostStatusHolder(String hostAndPort) {
+		HostStatusHolder(boolean isInbound, String hostAndPort) {
+			m_isInbound = isInbound;
 			m_hostAndPort = hostAndPort;
 		}
 		
@@ -239,7 +257,7 @@ public class StatusSystem
 			if (e == null) {
 				return null;
 			}
-			return new CurrentHostStatus(e.timestamp, e.status, e.reasonText, m_hostAndPort);
+			return new CurrentHostStatus(e.timestamp, e.status, e.reasonText, m_isInbound, m_hostAndPort);
 		}
 	}
 	

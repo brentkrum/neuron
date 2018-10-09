@@ -72,6 +72,7 @@ public final class NeuronApplication {
 		TimerSystem.register();
 		NamedValueSystem.register();
 		BytePipeSystem.register();
+		MessagePipeSystem.register();
 	}
 
 	public static void fatalExit() {

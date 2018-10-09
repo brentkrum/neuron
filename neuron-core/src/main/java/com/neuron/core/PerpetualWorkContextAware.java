@@ -8,6 +8,7 @@ public abstract class PerpetualWorkContextAware implements Runnable
 {
 	private final NeuronRef m_ref;
 	private final AtomicLong m_currentWorkTick = new AtomicLong();
+	private final AtomicLong m_nextRequestTick = new AtomicLong();
 	
 	public PerpetualWorkContextAware() {
 		m_ref = NeuronSystemTLS.currentNeuron();
@@ -25,11 +26,12 @@ public abstract class PerpetualWorkContextAware implements Runnable
 	public final void requestMoreWork()
 	{
 		final long currentRequestTick = m_currentWorkTick.get();
+		final long nextRequestTick = m_nextRequestTick.incrementAndGet();
 		
 		// The trick here is that m_currentWorkTick only needs to change, it does not
 		// indicate a number of items to do or a count of things to process.  This is just
 		// a housekeeping number which must change to keep the worker running
-		if (m_currentWorkTick.compareAndSet(currentRequestTick, currentRequestTick+1))
+		if (m_currentWorkTick.compareAndSet(currentRequestTick, nextRequestTick))
 		{
 			if (currentRequestTick == 0)
 			{
@@ -41,7 +43,7 @@ public abstract class PerpetualWorkContextAware implements Runnable
 				// Updated successfully, currently running work will pick this up
 			}
 		}
-		else if (m_currentWorkTick.compareAndSet(0, currentRequestTick+1))
+		else if (m_currentWorkTick.compareAndSet(0, nextRequestTick))
 		{
 			// work is not scheduled to run
 			NeuronApplication.getTaskPool().submit(this);

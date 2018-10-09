@@ -48,8 +48,8 @@ public abstract class NeuronRef {
 	public abstract INeuronStateLock lockState();
 	
 	public interface INeuronStateLock extends AutoCloseable {
-		void addStateListener(NeuronState state, INeuronStateSyncListener listener);
-		void addStateAsyncListener(NeuronState state, INeuronStateAsyncListener listener);
+		INeuronStateListenerRemoval addStateListener(NeuronState state, INeuronStateSyncListener listener);
+		INeuronStateListenerRemoval addStateAsyncListener(NeuronState state, INeuronStateAsyncListener listener);
 		
 		NeuronState currentState();
 		default boolean isStateOneOf(NeuronState... states) {
@@ -75,5 +75,9 @@ public abstract class NeuronRef {
 	
 	public interface INeuronStateAsyncListener extends INeuronStateListener {
 		void onStateReached(boolean successful, Promise<Void> promise);
+	}
+	
+	public interface INeuronStateListenerRemoval {
+		void remove();
 	}
 }

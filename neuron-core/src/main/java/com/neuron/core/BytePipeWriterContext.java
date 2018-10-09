@@ -15,8 +15,8 @@ import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 
-class BytePipeBufWriterContext implements IPipeWriterContext, IBytePipeWriter {
-	private static final Logger LOG = LogManager.getLogger(BytePipeBufWriterContext.class);
+class BytePipeWriterContext implements IPipeWriterContext, IBytePipeWriter {
+	private static final Logger LOG = LogManager.getLogger(BytePipeWriterContext.class);
 	
 	private IBytePipeWriterListener m_listener;
 	private final EventWorker m_worker;
@@ -28,7 +28,7 @@ class BytePipeBufWriterContext implements IPipeWriterContext, IBytePipeWriter {
 	private boolean m_pipeWriteableEvent;
 	private boolean m_pipeReaderOnline;
 	
-	BytePipeBufWriterContext(NeuronRef ref, BytePipeSystem.PipeBroker broker, IBytePipeWriterListener listener, ObjectConfig config) {
+	BytePipeWriterContext(NeuronRef ref, BytePipeSystem.PipeBroker broker, IBytePipeWriterListener listener, ObjectConfig config) {
 		m_owner = ref;
 		m_broker = broker;
 		m_worker = new EventWorker(ref);
@@ -124,7 +124,7 @@ class BytePipeBufWriterContext implements IPipeWriterContext, IBytePipeWriter {
 				final boolean pipeEmpty;
 				final boolean pipeWriteable;
 				final boolean pipeReaderOnline;
-				synchronized(BytePipeBufWriterContext.this) {
+				synchronized(BytePipeWriterContext.this) {
 					pipeEmpty = m_pipeEmptyEvent;
 					pipeWriteable = m_pipeWriteableEvent;
 					pipeReaderOnline = m_pipeReaderOnline;
@@ -135,21 +135,21 @@ class BytePipeBufWriterContext implements IPipeWriterContext, IBytePipeWriter {
 				if (m_listener != null) {
 					if (pipeWriteable) {
 						try {
-							m_listener.onEvent(IBytePipeWriterListener.Event.PipeWriteable, BytePipeBufWriterContext.this);
+							m_listener.onEvent(IBytePipeWriterListener.Event.PipeWriteable, BytePipeWriterContext.this);
 						} catch(Throwable t) {
 							NeuronApplication.logError(LOG, "Uhandled exception in user provided listener", t);
 						}
 					}
 					if (pipeEmpty) {
 						try {
-							m_listener.onEvent(IBytePipeWriterListener.Event.PipeEmpty, BytePipeBufWriterContext.this);
+							m_listener.onEvent(IBytePipeWriterListener.Event.PipeEmpty, BytePipeWriterContext.this);
 						} catch(Throwable t) {
 							NeuronApplication.logError(LOG, "Uhandled exception in user provided listener", t);
 						}
 					}
 					if (pipeReaderOnline) {
 						try {
-							m_listener.onEvent(IBytePipeWriterListener.Event.ReaderOnline, BytePipeBufWriterContext.this);
+							m_listener.onEvent(IBytePipeWriterListener.Event.ReaderOnline, BytePipeWriterContext.this);
 						} catch(Throwable t) {
 							NeuronApplication.logError(LOG, "Uhandled exception in user provided listener", t);
 						}

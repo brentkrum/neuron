@@ -73,18 +73,28 @@ public final class ObjectConfigBuilder
 			return (n==null) ? defaultValue : n.asText(defaultValue);
 		}
 		
+		public boolean has(String key) {
+			final JsonNode n = m_obj.get(key);
+			if (n == null || n.isNull()) {
+				return false;
+			}
+			return true;
+		}
+		
 		public Integer getInteger(String key, Integer defaultValue) {
 			final JsonNode n = m_obj.get(key);
-			if (n == null) {
+			if (n == null || n.isNull() || !n.canConvertToInt()) {
 				return defaultValue;
 			}
-			if (n.isNull()) {
+			return n.asInt();
+		}
+		
+		public Long getLong(String key, Long defaultValue) {
+			final JsonNode n = m_obj.get(key);
+			if (n == null || n.isNull() || !n.canConvertToLong()) {
 				return defaultValue;
 			}
-			if (n.canConvertToInt()) {
-				return n.asInt();
-			}
-			return defaultValue;
+			return n.asLong();
 		}
 
 		@Override

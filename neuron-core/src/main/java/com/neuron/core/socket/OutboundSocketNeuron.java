@@ -3,6 +3,7 @@ package com.neuron.core.socket;
 import java.net.BindException;
 import java.net.SocketException;
 import java.net.UnknownHostException;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
@@ -25,7 +26,7 @@ import io.netty.buffer.ByteBuf;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelFuture;
 import io.netty.channel.ChannelFutureListener;
-import io.netty.channel.ChannelHandler;
+import io.netty.channel.ChannelHandler.Sharable;
 import io.netty.channel.ChannelHandlerContext;
 import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOption;
@@ -38,25 +39,40 @@ import io.netty.util.concurrent.Promise;
 public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements INeuronInitialization
 {
 	private static final Logger LOG = LogManager.getLogger(OutboundSocketNeuron.class);
-	// TODO Need to bullet-proof this class <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
 	private enum ConnectionState { None, Connecting, Connected, Closing, Closed }
 	private final Bootstrap m_channelBootstrap = new Bootstrap();
 	private final CloseListener m_closeListener = new CloseListener();
 	private final String m_inetHost;
 	private final int m_port;
 	private final String m_statusHostAndPort;
+	private final long m_retryDelayInMS;
 	
+	private int m_repeatConnectError1 = 0;
 	private boolean m_deinitializing;
 	private Channel m_currentConnection;
 	private IPipeWriterContext m_inPipeWriter;
 	private ConnectionState m_connectionState = ConnectionState.None;
 	
-	public OutboundSocketNeuron(NeuronRef instanceRef, String inetHost, int port)
+	public OutboundSocketNeuron(NeuronRef instanceRef, String inetHost, int port, long retryDelayInMS)
 	{
 		super(instanceRef);
 		m_inetHost = inetHost;
 		m_port = port;
 		m_statusHostAndPort = m_inetHost + ":" + m_port;
+		m_retryDelayInMS = retryDelayInMS;
+	}
+
+	@Override
+	public void connectResources()
+	{
+		BytePipeSystem.configurePipeBroker("In", ObjectConfigBuilder.config().build());
+		BytePipeSystem.configurePipeBroker("Out", ObjectConfigBuilder.config().build());
+		
+		BytePipeSystem.readFromPipeAsChunk("Out", ObjectConfigBuilder.config().build(), new OutPipeReader());
+		
+		m_inPipeWriter = BytePipeSystem.writeToPipe("In", ObjectConfigBuilder.config().build(), (event, context) -> {
+			// No need to care about these events
+		});
 	}
 
 	@Override
@@ -96,19 +112,6 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 			});
 		}
 	}
-
-	@Override
-	public void connectResources()
-	{
-		BytePipeSystem.configurePipeBroker("In", ObjectConfigBuilder.config().build());
-		BytePipeSystem.configurePipeBroker("Out", ObjectConfigBuilder.config().build());
-		
-		BytePipeSystem.readFromPipeAsChunk("Out", ObjectConfigBuilder.config().build(), new OutPipeReader());
-		
-		m_inPipeWriter = BytePipeSystem.writeToPipe("In", ObjectConfigBuilder.config().build(), (event, context) -> {
-			// No need to care about these events
-		});
-	}
 	
 	@Override
 	public void deinit(Promise<Void> promise) {
@@ -143,16 +146,22 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 		public void onData(ByteBuf buf) {
 			synchronized(OutboundSocketNeuron.this) {
 				if (m_connectionState != ConnectionState.Connected) {
+					if (LOG.isTraceEnabled()) {
+						LOG.trace("{}:{} m_connectionState({}) != ConnectionState.Connected", m_inetHost, m_port, m_connectionState);
+					}
 					return;
 				}
 				buf.retain();
+				if (LOG.isTraceEnabled()) {
+					LOG.trace("{}:{} writeAndFlush", m_inetHost, m_port);
+				}
 				m_currentConnection.writeAndFlush(buf);
 			}
 		}
 		
 	}
 
-	@ChannelHandler.Sharable
+	@Sharable
 	private class InboundDataHandler extends ChannelInboundHandlerAdapter {
 
 		@Override
@@ -166,7 +175,12 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 			}
 			ReferenceCountUtil.release(msg);
 		}
-
+//
+//		@Override
+//		public void channelInactive(ChannelHandlerContext ctx) throws Exception {
+//			LOG.info("}}}}}}}} channelInactive");
+//		}
+		
 		@Override
 		public void exceptionCaught(ChannelHandlerContext ctx, Throwable cause)
 		{
@@ -197,12 +211,17 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 			m_completedPromise = completedPromise;
 		}
 		
+		ConnectListener() {
+			m_completedPromise = null;
+		}
+		
 		@Override
 		public void operationComplete(ChannelFuture future) throws Exception
 		{
 			try {
 				if (future.isSuccess()) {
 					synchronized(OutboundSocketNeuron.this) {
+						m_repeatConnectError1 = 0;
 						if (m_deinitializing) {
 							return;
 						}
@@ -252,7 +271,12 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 									}
 								});
 							} else {
-								NeuronApplication.logError(LOG, "Connection to {}:{} failed, but will continue to retry", m_inetHost, m_port, cause);
+								if (m_repeatConnectError1 == 0) {
+									NeuronApplication.logError(LOG, "Connection to {}:{} failed, but will continue to retry", m_inetHost, m_port, cause);
+								} else {
+									LOG.error("Connection to {}:{} failed, but will continue to retry", m_inetHost, m_port, cause);
+								}
+								m_repeatConnectError1++;
 							}
 						}
 						// There is no close listener, so we only have to worry about ourselves
@@ -260,11 +284,13 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, statusText);
 						
 						// send a message in the pipe alerting to the disconnected state?
-						// set timer to keep retrying
+						startRetryTimer();
 					}
 				}
 			} finally {
-				m_completedPromise.setSuccess((Void)null);
+				if (m_completedPromise != null) {
+					m_completedPromise.setSuccess((Void)null);
+				}
 			}
 		}
 		
@@ -307,10 +333,9 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 					if (m_deinitializing) {
 						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, "Disconnected, neuron deinitialized");
 					} else {
-						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, "Disconnected unexpectedly");
+						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, "Disconnected unexpectedly, will continue to retry");
 						// send a message in the pipe alerting to the disconnected state?
-						// report the connection/this neuron as down/disconnected -- we should have a place to report things that are "down"
-						//	set a timer to keep retrying
+						startRetryTimer();
 					}
 				} finally {
 					synchronized(this) {
@@ -323,5 +348,27 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 			}
 		}
 		
+	}
+	
+	private void startRetryTimer() {
+		NeuronApplication.getTaskPool().schedule(() -> {
+			synchronized(OutboundSocketNeuron.this) {
+				if (m_connectionState != ConnectionState.Closed) {
+					LOG.warn("RetryTimer got called-back while connectionState is {}.  Expected Closed.  RetryTimer is shutting down.", m_connectionState.toString());
+					return;
+				}
+				try(INeuronStateLock lock = ref().lockState()) {
+					if (lock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online)) {
+						LOG.info("Neuron state is {}, RetryTimer is shutting down.", lock.currentState());
+						return;
+					}
+				}
+				
+				m_closeListener.reset();
+				m_connectionState = ConnectionState.Connecting;
+			}
+			NeuronApplication.logInfo(LOG, "Connecting to {}:{}", m_inetHost, m_port);
+			m_channelBootstrap.connect().addListener(new ConnectListener());
+		}, m_retryDelayInMS, TimeUnit.MILLISECONDS); 
 	}
 }
