@@ -12,7 +12,6 @@ import com.neuron.core.MessagePipeSystem.IPipeWriterContext;
 import com.neuron.core.NeuronStateManager.INeuronManagement;
 import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
 import com.neuron.core.socket.InboundSocketNeuron;
 import com.neuron.core.socket.InboundSocketNeuronTemplate;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
@@ -33,7 +32,6 @@ import io.netty.channel.socket.nio.NioSocketChannel;
 import io.netty.util.concurrent.Promise;
 
 public class InboundSocketNeuron_Simple_Test {
-	private static ITemplateManagement m_templateMgt;
 	private static Promise<Void> m_testFuture; 
 
 	@BeforeAll
@@ -46,8 +44,7 @@ public class InboundSocketNeuron_Simple_Test {
 		System.setProperty("logger.com.neuron.core.socket.InboundSocketNeuron", "DEBUG");
 
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
-		m_templateMgt = TemplateStateManager.registerTemplate("InboundSocketNeuronTemplate", InboundSocketNeuronTemplate.class);
-		m_templateMgt.bringOnline().awaitUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("InboundSocketNeuronTemplate", InboundSocketNeuronTemplate.class).awaitUninterruptibly();
 	}
 
 	@AfterAll
@@ -81,7 +78,7 @@ public class InboundSocketNeuron_Simple_Test {
 
 		
 		LogManager.getLogger(InboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Create and bring Test Neuron online");
-		TemplateStateManager.registerTemplate("TestWriterTemplate", TestWriterTemplate.class).bringOnline().awaitUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("TestWriterTemplate", TestWriterTemplate.class).awaitUninterruptibly();
 		INeuronManagement nTest = NeuronStateManager.registerNeuron("TestWriterTemplate", "TestNeuron");
 		assertTrue(nTest.bringOnline(ObjectConfigBuilder.config().build()));
 		assertTrue(NeuronStateManagerTestUtils.createFutureForState(nTest.currentRef(), NeuronState.Online).awaitUninterruptibly(1000));

@@ -39,12 +39,12 @@ public class BytePipeSystem_RW_Test {
 	public void testReadWrite() {
 		m_testFuture = NeuronApplication.getTaskPool().next().newPromise();
 		
-		TemplateStateManager.registerTemplate("RWTestTemplateA", RWTestTemplateA.class).bringOnline().syncUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("RWTestTemplateA", RWTestTemplateA.class).syncUninterruptibly();
 		NeuronStateManager.registerNeuron("RWTestTemplateA", "NeuronA").bringOnline(ObjectConfigBuilder.config().build());
 		createFutureForState(NeuronStateManager.manage("NeuronA").currentRef(), NeuronState.Online).syncUninterruptibly();
 
 		
-		TemplateStateManager.registerTemplate("RWTestTemplateB", RWTestTemplateB.class).bringOnline().syncUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("RWTestTemplateB", RWTestTemplateB.class).syncUninterruptibly();
 		NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB").bringOnline(ObjectConfigBuilder.config().build());
 		createFutureForState(NeuronStateManager.manage("NeuronB").currentRef(), NeuronState.Online).syncUninterruptibly();
 		

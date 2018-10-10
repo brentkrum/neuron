@@ -1,11 +1,14 @@
 package com.neuron.core;
 
+import java.util.concurrent.CountDownLatch;
+
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
 
+import com.neuron.core.TemplateRef.ITemplateStateLock;
+import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
 import com.neuron.core.test.TestUtils;
 
 import io.netty.util.concurrent.Future;
@@ -20,7 +23,7 @@ public class NeuronTemplate_Simple_Test
 		TemplateStateManager.enableSelfTest();
 		
 		TemplateStateManager.registerTemplate("TestTemplate", TestTemplate.class);
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline("TestTemplate");
+		Future<TemplateRef> f = TemplateStateManager.manage("TestTemplate").bringOnline();
 		assertTrue(f.awaitUninterruptibly(1000), "Timeout waiting for TestTemplate to go online");
 		assertTrue(f.isSuccess());
 		
@@ -36,7 +39,15 @@ public class NeuronTemplate_Simple_Test
 
 		TestUtils.printSystemStatuses();
 
-		final Future<Void> offlineF = TemplateStateManagerTestUtils.takeTemplateOffline("TestTemplate");
+		final Future<TemplateRef> offlineF;
+		CountDownLatch l = new CountDownLatch(1);
+		try(ITemplateStateLock lock = f.getNow().lockState()) {
+			assertTrue(lock.takeOffline());
+			offlineF = lock.getStateFuture(TemplateState.Offline);
+			lock.addStateListener(TemplateState.Offline, (offlineFuture)-> {
+				l.countDown();
+			});
+		}
 		assertTrue(offlineF.awaitUninterruptibly(1000), "Timeout waiting for template to go offline");
 		assertTrue(offlineF.isSuccess());
 

@@ -23,10 +23,10 @@ import io.netty.util.concurrent.Promise;
 public class BytePipeSystem_ContinuousWrite_Test {
 	@BeforeAll
 	public static void init() {
-		System.setProperty("io.netty.leakDetection.level", "PARANOID");
-		System.setProperty("io.netty.leakDetection.targetRecords", "1");
-//		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
-//		System.setProperty("logger.com.neuron.core.BytePipeSystem", "DEBUG");
+//		System.setProperty("io.netty.leakDetection.level", "PARANOID");
+//		System.setProperty("io.netty.leakDetection.targetRecords", "1");
+		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
+		System.setProperty("logger.com.neuron.core.BytePipeSystem", "DEBUG");
 //		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
 		
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
@@ -47,7 +47,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 		m_testFuture = NeuronApplication.getTaskPool().next().newPromise();
 		
 		ITemplateManagement tMgt = TemplateStateManager.registerTemplate("RWTestTemplateA", RWTestTemplateA.class);
-		tMgt.bringOnline().syncUninterruptibly();
+		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgt).syncUninterruptibly().isSuccess());
 		
 		INeuronManagement nMgt = NeuronStateManager.registerNeuron(tMgt.currentRef(), "NeuronA");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
@@ -57,9 +57,9 @@ public class BytePipeSystem_ContinuousWrite_Test {
 		ITemplateManagement tMgtB = TemplateStateManager.registerTemplate("RWTestTemplateB", RWTestTemplateB.class);
 		INeuronManagement nMgtB = NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB");
 
-		for(int i=0; i<10; i++) {
+		for(int i=0; i<20; i++) {
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Template B online");
-			tMgtB.bringOnline().syncUninterruptibly();
+			assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgtB).syncUninterruptibly().isSuccess());
 			
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
 			assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config().build()));

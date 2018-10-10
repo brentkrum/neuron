@@ -1,6 +1,7 @@
 package com.neuron.core.socket;
 
 import java.net.BindException;
+import java.net.ConnectException;
 import java.net.SocketException;
 import java.net.UnknownHostException;
 import java.util.concurrent.TimeUnit;
@@ -249,9 +250,17 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 					} else if (cause instanceof SocketException && cause.getCause() instanceof BindException) {
 						takeOffline = true;
 						cause = cause.getCause();
+					} else if (cause instanceof ConnectException && cause.getCause() instanceof ConnectException) {
+						takeOffline = false;
+						cause = cause.getCause();
 					} else {
 						takeOffline = false;
 					}
+					if (statusText == null) {
+						statusText = cause.getClass().getSimpleName();
+					}
+					// There is no close listener, so we only have to worry about ourselves
+					future.channel().close();
 					synchronized(OutboundSocketNeuron.this) {
 						if (m_deinitializing) {
 							return;
@@ -270,18 +279,15 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 										onlineLock.takeOffline();
 									}
 								});
+								return;
 							} else {
 								if (m_repeatConnectError1 == 0) {
-									NeuronApplication.logError(LOG, "Connection to {}:{} failed, but will continue to retry", m_inetHost, m_port, cause);
-								} else {
-									LOG.error("Connection to {}:{} failed, but will continue to retry", m_inetHost, m_port, cause);
+									NeuronApplication.logError(LOG, "Connection to {}:{} failed, but will continue to retry every {} ms", m_inetHost, m_port, m_retryDelayInMS, cause);
 								}
 								m_repeatConnectError1++;
 							}
 						}
-						// There is no close listener, so we only have to worry about ourselves
-						future.channel().close();
-						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, statusText);
+						StatusSystem.setHostStatus(m_statusHostAndPort, StatusType.Down, statusText + ". Retrying every " + m_retryDelayInMS + " ms.");
 						
 						// send a message in the pipe alerting to the disconnected state?
 						startRetryTimer();
@@ -352,23 +358,27 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 	
 	private void startRetryTimer() {
 		NeuronApplication.getTaskPool().schedule(() -> {
-			synchronized(OutboundSocketNeuron.this) {
-				if (m_connectionState != ConnectionState.Closed) {
-					LOG.warn("RetryTimer got called-back while connectionState is {}.  Expected Closed.  RetryTimer is shutting down.", m_connectionState.toString());
-					return;
-				}
-				try(INeuronStateLock lock = ref().lockState()) {
-					if (lock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online)) {
-						LOG.info("Neuron state is {}, RetryTimer is shutting down.", lock.currentState());
+			try {
+				synchronized(OutboundSocketNeuron.this) {
+					if (m_connectionState != ConnectionState.Closed) {
+						LOG.warn("RetryTimer got called-back while connectionState is {}.  Expected Closed.  RetryTimer is shutting down.", m_connectionState.toString());
 						return;
 					}
+					try(INeuronStateLock lock = ref().lockState()) {
+						if (!lock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online)) {
+							LOG.info("Neuron state is {}, RetryTimer is shutting down.", lock.currentState());
+							return;
+						}
+					}
+					
+					m_closeListener.reset();
+					m_connectionState = ConnectionState.Connecting;
 				}
-				
-				m_closeListener.reset();
-				m_connectionState = ConnectionState.Connecting;
+//				LOG.info("Connecting to {}:{}", m_inetHost, m_port);
+				m_channelBootstrap.connect().addListener(new ConnectListener());
+			} catch(Exception ex) {
+				LOG.error("Unrecoverable exception in retry", ex);
 			}
-			NeuronApplication.logInfo(LOG, "Connecting to {}:{}", m_inetHost, m_port);
-			m_channelBootstrap.connect().addListener(new ConnectListener());
 		}, m_retryDelayInMS, TimeUnit.MILLISECONDS); 
 	}
 }

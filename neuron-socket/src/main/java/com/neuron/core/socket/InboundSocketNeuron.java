@@ -136,7 +136,6 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 				m_serverCloseListener.setCompletePromise(promise);
 				m_serverConnection.close();
 				m_serverState = ServerState.Closing;
-				return;
 				
 			} else if (m_serverState == ServerState.Binding) {
 				try(INeuronStateLock lock = ref().lockState()) {
@@ -145,34 +144,27 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 				m_serverCloseListener.setCompletePromise(promise);
 				m_serverConnection.close();
 				m_serverState = ServerState.Closing;
-				return;
 				
 			} else if (m_serverState == ServerState.Closing) {
 				m_serverCloseListener.setCompletePromise(promise);
+				
+			} else {
+				// m_serverState is None or Closed
+				promise.setSuccess((Void)null);
 			}
 		}
-		promise.setSuccess((Void)null);
 	}
 	
 	private void sendConnectEvent(final Connection c) {
-		final IPipeWriterContext inPipeWriter = m_inPipeWriter;
-		if (inPipeWriter != null) {
-			final InboundMessage pipeMsg = new InboundMessage(c, InboundMessage.MessageType.Connect, null);
-			if (!inPipeWriter.offer(pipeMsg)) {
-				// TODO log message about pipe full?? <<<<------------------------------------------------------------------------------------------------------------------------
-				pipeMsg.release();
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("Failed to send Connect message due to pipe full");
-				}
-			} else {
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("Sent connect message");
-				}
+		final InboundMessage pipeMsg = new InboundMessage(c, InboundMessage.MessageType.Connect, null);
+		if (!m_inPipeWriter.offer(pipeMsg)) {
+			pipeMsg.release();
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("Connect message rejected by pipe");
 			}
 		} else {
-			// else TODO log message about no writer?? <<<<------------------------------------------------------------------------------------------------------------------------
 			if (LOG.isDebugEnabled()) {
-				LOG.debug("PipeWriter is null");
+				LOG.debug("Sent connect message");
 			}
 		}
 	}
@@ -198,7 +190,6 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 				try(INeuronStateLock lock = ref().lockState()) {
 					// Only send data while we are SystemOnline, Online, or SystemOffline
 					if (!lock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online, NeuronState.GoingOffline)) {
-						// TODO log message about rejected message? <<<<------------------------------------------------------------------------------------------------------------------------
 						if (LOG.isDebugEnabled()) {
 							LOG.debug("OutPipeReader.onData - neuron state {} is not SystemOnline/Online/GoingOffline", lock.currentState());
 						}
@@ -206,11 +197,11 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 					}
 				}				
 				msg.data.retain();
-				// What happens if Channel is closed, closing, broken, etc.???
-				msg.connection.m_channel.writeAndFlush(msg.data);
 				if (LOG.isTraceEnabled()) {
 					LOG.trace("OutPipeReader.onData - writeAndFlush");
 				}
+				// What happens here if Channel is closed, closing, broken, etc.???
+				msg.connection.m_channel.writeAndFlush(msg.data);
 			}
 		}
 		
@@ -228,18 +219,21 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 					if (LOG.isDebugEnabled()) {
 						LOG.debug("Channel rejected due to Neuron state {}", lock.currentState());
 					}
-					// TODO log message about rejected connection? <<<<------------------------------------------------------------------------------------------------------------------------
 					ch.close();
 					return;
 				}
-				// TODO Need to remove this listener if we disconnect! <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-				INeuronStateListenerRemoval listenerRemove = lock.addStateAsyncListener(NeuronState.Deinitializing, (success, completed) -> {
+
+				final INeuronStateListenerRemoval listenerRemove = lock.addStateAsyncListener(NeuronState.Deinitializing, (success, completed) -> {
 					if (LOG.isDebugEnabled()) {
-						LOG.debug("DeInit closing");
+						try(INeuronStateLock callbackLock = ref().lockState()) {
+							LOG.debug("DeInit closing");
+						}
 					}
 					ch.close().addListener((f) -> {
 						if (LOG.isDebugEnabled()) {
-							LOG.debug("DeInit close completed");
+							try(INeuronStateLock callbackLock = ref().lockState()) {
+								LOG.debug("DeInit close completed");
+							}
 						}
 						completed.setSuccess((Void)null);
 					});
@@ -266,30 +260,22 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 		public void channelRead(ChannelHandlerContext ctx, Object msg)
 		{
 			if (!(msg instanceof ByteBuf)) {
-				// TODO log message about not a ByteBuf?? <<<<------------------------------------------------------------------------------------------------------------------------
 				ReferenceCountUtil.release(msg);
 				LOG.error("channelRead got a non-ByteBuf: {}", msg.getClass().getCanonicalName());
 				return;
 			}
 			final Connection c = ctx.channel().attr(CONNECTION).get();
-			final IPipeWriterContext inPipeWriter = m_inPipeWriter;
-			if (inPipeWriter != null) {
-				final InboundMessage pipeMsg = new InboundMessage(c, InboundMessage.MessageType.Data, (ByteBuf)msg);
-				if (inPipeWriter.offer(pipeMsg)) {
-					if (LOG.isTraceEnabled()) {
-						LOG.trace("ConnectionInboundDataHandler.channelRead() - sent Data message");
-					}
-					return;
+			final InboundMessage pipeMsg = new InboundMessage(c, InboundMessage.MessageType.Data, (ByteBuf)msg);
+			if (m_inPipeWriter.offer(pipeMsg)) {
+				if (LOG.isTraceEnabled()) {
+					LOG.trace("ConnectionInboundDataHandler.channelRead() - sent Data message");
 				}
-				pipeMsg.release();
-				LOG.error("{} pipe full, data loss", inPipeWriter.name());
 				return;
-			} else {
-				// else TODO log message about no writer?? <<<<------------------------------------------------------------------------------------------------------------------------
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("ConnectionInboundDataHandler.channelRead() - PipeWriter is null");
-				}
 			}
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("ConnectionInboundDataHandler.channelRead() - {} pipe full, releasing buffer", m_inPipeWriter.name());
+			}
+			pipeMsg.release();
 		}
 
 		@Override
@@ -298,13 +284,6 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 				LOG.debug("channelInactive({})", ctx.channel().remoteAddress().toString());
 			}
 			
-			final IPipeWriterContext inPipeWriter = m_inPipeWriter;
-			if (inPipeWriter == null) {
-				if (LOG.isDebugEnabled()) {
-					LOG.debug("channelInactive() - pipWRiter is null");
-				}
-				return;
-			}
 			final Connection c = ctx.channel().attr(CONNECTION).getAndSet(null);
 			if (c == null) {
 				if (LOG.isDebugEnabled()) {
@@ -317,13 +296,12 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 				c.m_listenerRemove.remove();
 			}
 			final InboundMessage pipeMsg = new InboundMessage(c, InboundMessage.MessageType.Disconnect, null);
-			if (inPipeWriter.offer(pipeMsg)) {
+			if (m_inPipeWriter.offer(pipeMsg)) {
 				return;
 			}
 			pipeMsg.release();
-			// TODO log message about pipe full?? <<<<------------------------------------------------------------------------------------------------------------------------
 			if (LOG.isDebugEnabled()) {
-				LOG.debug("Failed to send Disconnect message due to pipe full");
+				LOG.debug("ConnectionInboundDataHandler.channelInactive() - {} pipe full, cannot send Disconnect message", m_inPipeWriter.name());
 			}
 		}
 
@@ -363,7 +341,8 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 					}
 					ctx.close();
 				} else {
-					LOG.error("Exception with bound socket (state={})", m_serverState, cause);
+					LOG.info("Exception with socket (state={}), calling close", m_serverState, cause);
+					ctx.close();
 				}
 			}
 		}

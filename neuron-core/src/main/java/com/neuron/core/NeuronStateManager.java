@@ -33,6 +33,7 @@ public final class NeuronStateManager {
 	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.NeuronStateManager.lockLeakDetection", false);
 	private static final long DEFAULT_INIT_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateManager.defaultInitTimeout", 5000);
 	private static final int MAX_LOG_SIZE = Config.getFWInt("core.NeuronStateManager.logSize", 64);
+	private static final int MAX_OLD_GEN = Config.getFWInt("core.NeuronStateManager.maxNumOldGen", 4);
 	
 	private static final Logger LOG = LogManager.getLogger(NeuronStateManager.class);
 
@@ -84,6 +85,7 @@ public final class NeuronStateManager {
 	public interface INeuronManagement {
 		boolean bringOnline(ObjectConfig config);
 		NeuronRef currentRef();
+		NeuronRef getGenerationRef(int generation);
 	}
 	
 	private static final class Management implements INeuronManagement {
@@ -97,10 +99,23 @@ public final class NeuronStateManager {
 			m_id = m_nextNeuronId.incrementAndGet();
 			m_templateName = templateName;
 			m_name = neuronName;
-			m_current = new InstanceManagement(TemplateStateManager.manage(m_templateName).currentRef(), m_nextNeuronGen.incrementAndGet());
+			m_current = new InstanceManagement(TemplateStateManager.manage(m_templateName).currentRef(), m_nextNeuronGen.incrementAndGet(), null);
 			m_current.initOffline();
 		}
 		
+		@Override
+		public NeuronRef getGenerationRef(int generation) {
+			synchronized(this) {
+				for(InstanceManagement i : m_oldGen) {
+					if (i.generation() == generation) {
+						return i;
+					}
+				}
+			}
+			return null;
+		}
+
+
 		// This could be called by anybody anywhere
 		@Override
 		public boolean bringOnline(ObjectConfig config) {
@@ -125,57 +140,17 @@ public final class NeuronStateManager {
 						}
 					}
 					m_oldGen.add(m_current);
+					while(m_oldGen.size() > MAX_OLD_GEN) {
+						m_oldGen.remove();
+					}
 				}
 				// This is the only place that m_current is ever modified
-				m_current = new InstanceManagement(currentTemplateRef, m_nextNeuronGen.incrementAndGet());
+				m_current = new InstanceManagement(currentTemplateRef, m_nextNeuronGen.incrementAndGet(), config);
 				mgt = m_current;
 			}
 			// At this point it is safe to use it outside the lock
 			// It currently is in the state of NA and there is no way to change that except
 			// by the thread there is here.
-			
-			// NA -> BeingCreated -> Initializing -> Connect -> SystemOnline -> Online
-			mgt.getStateManager(NeuronState.BeingCreated).setPreListener((boolean successful) -> {
-				// We transitioned from NA to BeingCreated
-				mgt.onBeingCreated(config);
-			});
-			mgt.getStateManager(NeuronState.Initializing).setPreListener((boolean successful) -> {
-				if (successful) {
-					mgt.onInitializing();
-				}
-			});
-			mgt.getStateManager(NeuronState.Connect).setPostListener((boolean successful) -> {
-				if (successful) {
-					mgt.onConnectResources();
-				}
-			});
-			mgt.getStateManager(NeuronState.SystemOnline).setPostListener((boolean successful) -> {
-				if (successful) {
-					mgt.onSystemOnline();
-				}
-			});
-			
-			// GoingOffline -> Disconnecting -> DeInitializing -> SystemOffline -> Offline
-			mgt.getStateManager(NeuronState.GoingOffline).setPostListener((boolean successful) -> {
-				if (successful) {
-					mgt.setState(NeuronState.Disconnecting);
-				}
-			});
-			mgt.getStateManager(NeuronState.Disconnecting).setPostListener((boolean successful) -> {
-				if (successful) {
-					mgt.onDeInitializing();
-				}
-			});
-			mgt.getStateManager(NeuronState.Deinitializing).setPostListener((boolean successful) -> {
-				if (successful) {
-					mgt.setState(NeuronState.SystemOffline);
-				}
-			});
-			mgt.getStateManager(NeuronState.SystemOffline).setPostListener((boolean successful) -> {
-				if (successful) {
-					mgt.setState(NeuronState.Offline);
-				}
-			});
 			
 			mgt.setState(NeuronState.BeingCreated);
 
@@ -191,6 +166,7 @@ public final class NeuronStateManager {
 			private final StateManagement m_stateMgt[] = new StateManagement[NeuronState.values().length];
 			private final EventLoop m_myEventLoop;
 			private final LinkedList<NeuronLogEntry> m_log = new LinkedList<>();
+			private final ObjectConfig m_config; 
 			private INeuronInitialization m_neuron;
 			private NeuronState m_state = NeuronState.NA;
 			private int m_stateLockCount;
@@ -199,15 +175,64 @@ public final class NeuronStateManager {
 			private int m_nextLockTrackingId = 1;
 			private NeuronState m_pendingState = null;
 			
-			private InstanceManagement(TemplateRef templateRef, int gen) {
+			private InstanceManagement(TemplateRef templateRef, int gen, ObjectConfig config) {
 				super(templateRef, m_id, m_name, gen);
+				m_config = config;
 				m_myEventLoop = NeuronApplication.getTaskPool().next();
 				for(NeuronState s : NeuronState.values()) {
 					m_stateMgt[s.ordinal()] = new StateManagement(s);
 				}
+				setSystemListeners();
 			}
 
-			private void onBeingCreated(ObjectConfig config) {
+			private void setSystemListeners() {
+				// NA -> BeingCreated -> Initializing -> Connect -> SystemOnline -> Online
+				getStateManager(NeuronState.BeingCreated).setPreListener((boolean successful) -> {
+					// We transitioned from NA to BeingCreated
+					if (successful) {
+						onBeingCreated();
+					}
+				});
+				getStateManager(NeuronState.Initializing).setPreListener((boolean successful) -> {
+					if (successful) {
+						onInitializing();
+					}
+				});
+				getStateManager(NeuronState.Connect).setPostListener((boolean successful) -> {
+					if (successful) {
+						onConnectResources();
+					}
+				});
+				getStateManager(NeuronState.SystemOnline).setPostListener((boolean successful) -> {
+					if (successful) {
+						onSystemOnline();
+					}
+				});
+				
+				// GoingOffline -> Disconnecting -> DeInitializing -> SystemOffline -> Offline
+				getStateManager(NeuronState.GoingOffline).setPostListener((boolean successful) -> {
+					if (successful) {
+						setState(NeuronState.Disconnecting);
+					}
+				});
+				getStateManager(NeuronState.Disconnecting).setPostListener((boolean successful) -> {
+					if (successful) {
+						onDeInitializing();
+					}
+				});
+				getStateManager(NeuronState.Deinitializing).setPostListener((boolean successful) -> {
+					if (successful) {
+						setState(NeuronState.SystemOffline);
+					}
+				});
+				getStateManager(NeuronState.SystemOffline).setPostListener((boolean successful) -> {
+					if (successful) {
+						setState(NeuronState.Offline);
+					}
+				});
+			}
+
+			private void onBeingCreated() {
 				try(final ITemplateStateLock lock = templateRef().lockState()) {
 					NeuronSystemTLS.add(this);
 					try {
@@ -217,15 +242,15 @@ public final class NeuronStateManager {
 							abortToOffline(ex, false);
 							return;
 						}
-						m_neuron = lock.createNeuron(this, config);
+						m_neuron = lock.createNeuron(this, m_config);
 						if (m_neuron == null) {
 							NeuronApplication.logError(LOG, "template.createNeuron() returned null");
 							abortToOffline(new RuntimeException("template.createNeuron() returned null"), false);
 							return;
 						}
 						// TODO need to remove the listener when we go offline (but only if the template is still online) <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-						lock.addStateListener(TemplateState.TakeNeuronsOffline, (f) -> {
-							if (f.isSuccess()) {
+						lock.addStateListener(TemplateState.TakeNeuronsOffline, (isSuccess) -> {
+							if (isSuccess) {
 								try(INeuronStateLock offlineLock = m_current.lockState()) {
 									if (offlineLock.currentState() == NeuronState.Online) {
 										setState(NeuronState.GoingOffline);
@@ -655,7 +680,7 @@ public final class NeuronStateManager {
 		try {
 			neuron.init(initDone);
 		} catch(Exception ex) {
-			NeuronApplication.logError(LOG, "Exception thrown from neuron.init()", ex);
+//			NeuronApplication.logError(LOG, "Exception thrown from neuron.init()", ex);
 			initDone.tryFailure(ex);
 			return;
 		}
@@ -673,22 +698,23 @@ public final class NeuronStateManager {
 			timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
 			NeuronApplication.logError(LOG, "Failure getting init timeout from neuron '{}',  Using default value of {} instead.", name, timeoutInMS, ex);
 		}
+		final NeuronRef ref = NeuronSystemTLS.currentNeuron();
 		final long toMS = timeoutInMS;
 		final ScheduledFuture<?> initTimeout = NeuronApplication.getTaskPool().schedule(() -> {
-			initDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms initializing neuron '" + name + "'") );
+			if (initDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms initializing neuron '" + name + "'") )) {
+				NeuronSystemTLS.add(ref);
+				try {
+					neuron.onInitTimeout();
+				} catch(Exception ex) {
+					NeuronApplication.logError(LOG, "Exception from neuron.onInitTimeout()", ex);
+				} finally {
+					NeuronSystemTLS.remove();
+				}
+			}
 		}, timeoutInMS, TimeUnit.MILLISECONDS);
 		
-		NeuronRef ref = NeuronSystemTLS.currentNeuron();
 		initDone.addListener((Future<Void> f) -> {
 			initTimeout.cancel(false);
-			NeuronSystemTLS.add(ref);
-			try {
-				neuron.onInitTimeout();
-			} catch(Exception ex) {
-				NeuronApplication.logError(LOG, "Exception from neuron.onInitTimeout()", ex);
-			} finally {
-				NeuronSystemTLS.remove();
-			}
 		});
 	}
 	
@@ -714,22 +740,23 @@ public final class NeuronStateManager {
 			timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
 			NeuronApplication.logError(LOG, "Failure getting Deinit timeout from neuron '{}',  Using default value of {} instead.", name, timeoutInMS, ex);
 		}
+		final NeuronRef ref = NeuronSystemTLS.currentNeuron();
 		final long toMS = timeoutInMS;
-		final ScheduledFuture<?> initTimeout = NeuronApplication.getTaskPool().schedule(() -> {
-			deinitDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms de-initializing neuron '" + name + "'") );
+		final ScheduledFuture<?> deinitTimeout = NeuronApplication.getTaskPool().schedule(() -> {
+			if (deinitDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms de-initializing neuron '" + name + "'") )) {
+				NeuronSystemTLS.add(ref);
+				try {
+					neuron.onDeinitTimeout();
+				} catch(Exception ex) {
+					NeuronApplication.logError(LOG, "Exception from neuron.onDeinitTimeout()", ex);
+				} finally {
+					NeuronSystemTLS.remove();
+				}
+			}
 		}, timeoutInMS, TimeUnit.MILLISECONDS);
 		
-		NeuronRef ref = NeuronSystemTLS.currentNeuron();
 		deinitDone.addListener((Future<Void> f) -> {
-			initTimeout.cancel(false);
-			NeuronSystemTLS.add(ref);
-			try {
-				neuron.onDeinitTimeout();
-			} catch(Exception ex) {
-				NeuronApplication.logError(LOG, "Exception from neuron.onInitTimeout()", ex);
-			} finally {
-				NeuronSystemTLS.remove();
-			}
+			deinitTimeout.cancel(false);
 		});
 	}
 	

@@ -18,7 +18,8 @@
 		<log4j2.version>2.11.1</log4j2.version>
 		<slf4j.version>1.7.25</slf4j.version>
 		<netty.version>4.1.30.Final</netty.version>
-
+		<rhino.version>1.7.10</rhino.version>
+		
 		<hamcrest.version>1.3</hamcrest.version>
 		<mockito.version>2.22.0</mockito.version>
 
@@ -51,7 +52,7 @@
 
 	<dependencyManagement>
 		<dependencies>
-			<!-- AppleLG Framework -->
+			<!-- Neuron Framework -->
 			<dependency>
 				<groupId>com.neuron</groupId>
 				<artifactId>neuron-utility</artifactId>
@@ -110,7 +111,11 @@
 				<artifactId>netty-all</artifactId>
 				<version>${netty.version}</version>
 			</dependency>
-
+			<dependency>
+				<groupId>org.mozilla</groupId>
+				<artifactId>rhino</artifactId>
+				<version>${rhino.version}</version>
+			</dependency>
 
 			<dependency>
 				<groupId>org.junit.jupiter</groupId>

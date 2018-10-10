@@ -20,10 +20,6 @@ public interface INeuronTemplate
 	 */
 	INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config);
 	
-	default boolean isKnown() {
-		return true;
-	}
-	
 	default long initTimeoutInMS() {
 		return 1000;
 	}

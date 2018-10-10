@@ -57,24 +57,24 @@ public class StatusSystem
 				h = new TemplateStatusHolder(ref);
 				m_templateStatusTrie.addOrFetch(ref.id(), h);
 			}
-			h.addStatusTrail(status, reasonText);
+			h.addStatusTrail(ref, status, reasonText);
 		}
 		if (LOG.isDebugEnabled()) {
 			LOG.debug("{}: {} {}", ref.logString(), status, reasonText);
 		}
 	}
 	
-	public static void setStatus(NeuronRef instanceRef, StatusType status, String reasonText) {
+	public static void setStatus(NeuronRef ref, StatusType status, String reasonText) {
 		synchronized(m_neuronLock) {
-			NeuronStatusHolder h = m_neuronStatusTrie.get(instanceRef.id());
+			NeuronStatusHolder h = m_neuronStatusTrie.get(ref.id());
 			if (h == null) {
-				h = new NeuronStatusHolder(instanceRef);
-				m_neuronStatusTrie.addOrFetch(instanceRef.id(), h);
+				h = new NeuronStatusHolder(ref);
+				m_neuronStatusTrie.addOrFetch(ref.id(), h);
 			}
-			h.addStatusTrail(status, reasonText);
+			h.addStatusTrail(ref, status, reasonText);
 		}
 		if (LOG.isDebugEnabled()) {
-			LOG.debug("({}: {} {}", instanceRef.logString(), status, reasonText);
+			LOG.debug("({}: {} {}", ref.logString(), status, reasonText);
 		}
 	}
 
@@ -199,8 +199,8 @@ public class StatusSystem
 	private static class StatusHolder {
 		private final FastLinkedList<StatusEntry> m_statusTrail = new FastLinkedList<>(); // Keep the last X status entries
 		
-		public void addStatusTrail(StatusType status, String reasonText) {
-			m_statusTrail.add(new StatusEntry(System.currentTimeMillis(), status, reasonText));
+		protected void _addStatusTrail(StatusEntry entry) {
+			m_statusTrail.add(entry);
 			while (m_statusTrail.count() > TEMPLATE_STATUS_TRAIL_SIZE) {
 				m_statusTrail.removeFirst();
 			}
@@ -211,35 +211,69 @@ public class StatusSystem
 		}
 	}
 	
+	@SuppressWarnings("unused")
 	private static class TemplateStatusHolder extends StatusHolder{
-		private final TemplateRef m_ref;
+		private final int m_id;
+		private final String m_name;
 		
 		TemplateStatusHolder(TemplateRef ref) {
-			m_ref = ref;
+			m_id = ref.id();
+			m_name = ref.name();
 		}
 		
 		CurrentStatus getCurrentStatus() {
-			StatusEntry e = getMostRecentStatus();
+			TemplateStatusEntry e = (TemplateStatusEntry)getMostRecentStatus();
 			if (e == null) {
 				return null;
 			}
-			return new CurrentTemplateStatus(e.timestamp, e.status, e.reasonText, m_ref);
+			return new CurrentTemplateStatus(e.timestamp, e.status, e.reasonText, e.m_ref);
+		}
+		
+		public void addStatusTrail(TemplateRef ref, StatusType status, String reasonText) {
+			_addStatusTrail(new TemplateStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
+		}
+		
+		private static class TemplateStatusEntry extends StatusEntry {
+			private final TemplateRef m_ref;
+			
+			TemplateStatusEntry(long timestamp, StatusType status, String reasonText, TemplateRef ref) {
+				super(timestamp, status, reasonText);
+				this.m_ref = ref;
+			}
+			
 		}
 	}
 	
+	@SuppressWarnings("unused")
 	private static class NeuronStatusHolder extends StatusHolder{
-		private final NeuronRef m_instanceRef;
+		private final int m_id;
+		private final String m_name;
 		
-		NeuronStatusHolder(NeuronRef instanceRef) {
-			m_instanceRef = instanceRef;
+		NeuronStatusHolder(NeuronRef ref) {
+			m_id = ref.id();
+			m_name = ref.name();
 		}
 		
 		CurrentStatus getCurrentStatus() {
-			StatusEntry e = getMostRecentStatus();
+			NeuronStatusEntry e = (NeuronStatusEntry)getMostRecentStatus();
 			if (e == null) {
 				return null;
 			}
-			return new CurrentNeuronStatus(e.timestamp, e.status, e.reasonText, m_instanceRef);
+			return new CurrentNeuronStatus(e.timestamp, e.status, e.reasonText, e.m_ref);
+		}
+		
+		public void addStatusTrail(NeuronRef ref, StatusType status, String reasonText) {
+			_addStatusTrail(new NeuronStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
+		}
+		
+		private static class NeuronStatusEntry extends StatusEntry {
+			private final NeuronRef m_ref;
+			
+			NeuronStatusEntry(long timestamp, StatusType status, String reasonText, NeuronRef ref) {
+				super(timestamp, status, reasonText);
+				this.m_ref = ref;
+			}
+			
 		}
 	}
 	
@@ -259,13 +293,17 @@ public class StatusSystem
 			}
 			return new CurrentHostStatus(e.timestamp, e.status, e.reasonText, m_isInbound, m_hostAndPort);
 		}
+		
+		public void addStatusTrail(StatusType status, String reasonText) {
+			_addStatusTrail(new StatusEntry(System.currentTimeMillis(), status, reasonText));
+		}
 	}
 	
 
-	private static class StatusEntry extends FastLinkedList.LLNode<StatusEntry>{
-		private final long timestamp;
-		private final StatusType status;
-		private final String reasonText;
+	private static class StatusEntry extends FastLinkedList.LLNode<StatusEntry> {
+		protected final long timestamp;
+		protected final StatusType status;
+		protected final String reasonText;
 		
 		StatusEntry(long timestamp, StatusType status, String reasonText) {
 			this.timestamp = timestamp;

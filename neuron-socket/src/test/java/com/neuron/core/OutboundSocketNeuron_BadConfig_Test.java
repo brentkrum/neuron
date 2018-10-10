@@ -9,21 +9,19 @@ import org.junit.jupiter.api.Test;
 
 import com.neuron.core.NeuronStateManager.INeuronManagement;
 import com.neuron.core.NeuronStateManager.NeuronState;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
 import com.neuron.core.socket.OutboundSocketNeuronTemplate;
 import com.neuron.core.test.NeuronStateManagerTestUtils;
+import com.neuron.core.test.TemplateStateManagerTestUtils;
 import com.neuron.core.test.TestUtils;
 
 public class OutboundSocketNeuron_BadConfig_Test {
-	private static ITemplateManagement m_templateMgt;
 	
 	@BeforeAll
 	public static void init() {
 		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
 		
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
-		m_templateMgt = TemplateStateManager.registerTemplate("OutboundSocketNeuronTemplate", OutboundSocketNeuronTemplate.class);
-		m_templateMgt.bringOnline().awaitUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("OutboundSocketNeuronTemplate", OutboundSocketNeuronTemplate.class).awaitUninterruptibly();
 	}
 	
 	@AfterAll

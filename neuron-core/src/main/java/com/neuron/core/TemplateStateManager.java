@@ -18,12 +18,13 @@ import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
+import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
+import com.neuron.utility.FastLinkedList;
 import com.neuron.utility.IntTrie;
 
 import io.netty.channel.EventLoop;
 import io.netty.util.concurrent.Future;
-import io.netty.util.concurrent.GenericFutureListener;
 import io.netty.util.concurrent.Promise;
 import io.netty.util.concurrent.ScheduledFuture;
 
@@ -77,7 +78,7 @@ public final class TemplateStateManager {
 	}
 
 	public interface ITemplateManagement {
-		Future<TemplateRef> bringOnline();
+		boolean bringOnline();
 		TemplateRef currentRef();
 	}
 	
@@ -104,16 +105,16 @@ public final class TemplateStateManager {
 		}
 		
 		@Override
-		public Future<TemplateRef> bringOnline() {
+		public boolean bringOnline() {
 			// This could be called by anybody anywhere
 			synchronized(this) {
 				if (m_current != null) {
 					try(final ITemplateStateLock lock = m_current.lockState()) {
 						if (lock.currentState().ordinal() <= TemplateState.Online.ordinal()) {
-							return m_current.getStateFuture(TemplateState.Online);
+							return true;
 						}
 						if (lock.currentState() != TemplateState.Offline) {
-							return null;
+							return false;
 						}
 					}
 					m_oldGen.add(m_current);
@@ -126,7 +127,7 @@ public final class TemplateStateManager {
 			// by the thread there is here.
 			m_current.setState(TemplateState.BeingCreated);
 
-			return m_current.getStateFuture(TemplateState.Online);
+			return true;
 		}
 		
 		@Override
@@ -135,8 +136,7 @@ public final class TemplateStateManager {
 		}
 		
 		private final class InstanceManagement extends TemplateRef {
-			@SuppressWarnings("unchecked")
-			private final Promise<TemplateRef> m_statePromise[] = new Promise[TemplateState.values().length];
+			private final StateManagement m_stateMgt[] = new StateManagement[TemplateState.values().length];
 			private final EventLoop m_myEventLoop;
 			private final LinkedList<NeuronLogEntry> m_log = new LinkedList<>();
 			private final IntTrie<Boolean> m_activeNeuronsById = new IntTrie<>();
@@ -151,38 +151,38 @@ public final class TemplateStateManager {
 			private InstanceManagement(int gen) {
 				super(m_id, m_name, gen);
 				m_myEventLoop = NeuronApplication.getTaskPool().next();
-				for(int i=1; i<m_statePromise.length; i++) {
-					m_statePromise[i] = m_myEventLoop.newPromise();
+				for(TemplateState s : TemplateState.values()) {
+					m_stateMgt[s.ordinal()] = new StateManagement(s);
 				}
 				setSystemListeners();
 			}
 			
 			private void setSystemListeners() {
 				// NA -> BeingCreated -> Initializing -> RunSelfTest -> SystemOnline -> Online
-				getStateFuture(TemplateState.BeingCreated).addListener((f) -> {
-					if (f.isSuccess()) {
+				getStateManager(TemplateState.BeingCreated).setPreListener((isSuccessful) -> {
+					if (isSuccessful) {
 						onBeingCreated();
 					}
 				});
-				getStateFuture(TemplateState.Initializing).addListener((f) -> {
-					if (f.isSuccess()) {
+				getStateManager(TemplateState.Initializing).setPreListener((isSuccessful) -> {
+					if (isSuccessful) {
 						onInitializing();
 					}
 				});
-				getStateFuture(TemplateState.RunSelfTest).addListener((f) -> {
-					if (f.isSuccess()) {
+				getStateManager(TemplateState.RunSelfTest).setPostListener((isSuccessful) -> {
+					if (isSuccessful) {
 						setState(TemplateState.SystemOnline);
 					}
 				});
-				getStateFuture(TemplateState.SystemOnline).addListener((f) -> {
-					if (f.isSuccess()) {
+				getStateManager(TemplateState.SystemOnline).setPostListener((isSuccessful) -> {
+					if (isSuccessful) {
 						setState(TemplateState.Online);
 					}
 				});
 				
 				// TakeNeuronsOffline -> SystemOffline -> Offline
-				getStateFuture(TemplateState.TakeNeuronsOffline).addListener((f) -> {
-					if (f.isSuccess()) {
+				getStateManager(TemplateState.TakeNeuronsOffline).setPostListener((isSuccessful) -> {
+					if (isSuccessful) {
 						try(ITemplateStateLock templateLock = lockState()) {
 							if (templateLock.currentState() == TemplateState.TakeNeuronsOffline) {
 								final int neuronsLeft;
@@ -196,8 +196,8 @@ public final class TemplateStateManager {
 						}
 					}
 				});
-				getStateFuture(TemplateState.SystemOffline).addListener((f) -> {
-					if (f.isSuccess()) {
+				getStateManager(TemplateState.SystemOffline).setPostListener((isSuccessful) -> {
+					if (isSuccessful) {
 						setState(TemplateState.Offline);
 					}
 				});
@@ -262,7 +262,7 @@ public final class TemplateStateManager {
 			
 			private void abortToOffline(Throwable t, boolean logThis) {
 				if (logThis) {
-					NeuronApplication.logError("Template set offline due to exception in startup states", t);
+					NeuronApplication.logError(LOG, "Template set offline due to exception in startup states", t);
 				}
 				final int start;
 				synchronized(this) {
@@ -270,10 +270,10 @@ public final class TemplateStateManager {
 					m_state = TemplateState.Offline;
 					StatusSystem.setStatus(this, StatusType.Offline, "Template set offline due to exception in startup states");
 				}
-				for(int i=start; i<m_statePromise.length-1; i++) {
-					m_statePromise[i].tryFailure(t);
+				for(int i=start; i<m_stateMgt.length-1; i++) {
+					m_stateMgt[i].m_reachedStatePromise.tryFailure(t);
 				}
-				m_statePromise[TemplateState.Offline.ordinal()].trySuccess(this);
+				m_stateMgt[TemplateState.Offline.ordinal()].m_reachedStatePromise.trySuccess(this);
 			}
 			
 			private void initOffline() {
@@ -283,34 +283,32 @@ public final class TemplateStateManager {
 					m_state = TemplateState.Offline;
 					StatusSystem.setStatus(this, StatusType.Offline, "registered");
 				}
-				Throwable t = new RuntimeException();
-				for(int i=start; i<m_statePromise.length-1; i++) {
-					m_statePromise[i].tryFailure(t);
+				Throwable dummy = new RuntimeException();
+				for(int i=start; i<m_stateMgt.length-1; i++) {
+					m_stateMgt[i].m_reachedStatePromise.tryFailure(dummy);
 				}
-				m_statePromise[TemplateState.Offline.ordinal()].trySuccess(this);
+				m_stateMgt[TemplateState.Offline.ordinal()].m_reachedStatePromise.trySuccess(this);
 			}
 
-			private Future<TemplateRef> getStateFuture(TemplateState state) {
-				return m_statePromise[state.ordinal()];
+			private StateManagement getStateManager(TemplateState state) {
+				return m_stateMgt[state.ordinal()];
 			}
 			
-			private Future<TemplateRef> setState(TemplateState state) {
-				final Promise<TemplateRef> promise;
+			private void setState(TemplateState state) {
 				synchronized(this) {
 					if (state.ordinal() != m_state.ordinal()+1) {
 						throw new IllegalArgumentException("Current state is " + m_state + ", cannot set state to " + state);
 					}
-					promise = m_statePromise[state.ordinal()];
 					if (m_stateLockCount == 0) {
-						setState0(state, promise);
+						setState0(state);
 					} else {
 						m_pendingState = state;
 					}
 				}
-				return promise;
 			}
 			
-			private void setState0(TemplateState state, Promise<TemplateRef> promise) {
+			private void setState0(TemplateState state) {
+				final Promise<TemplateRef> promise = m_stateMgt[state.ordinal()].m_reachedStatePromise;
 				m_state = state;
 				String reasonText = state.toString();
 				final StatusType st;
@@ -360,8 +358,7 @@ public final class TemplateStateManager {
 							m_lockTracking.remove(lockTrackingId);
 						}
 						if (m_pendingState != null) {
-							Promise<TemplateRef> promise = m_statePromise[m_pendingState.ordinal()];
-							setState0(m_pendingState, promise);
+							setState0(m_pendingState);
 							m_pendingState = null;
 						}
 					}
@@ -389,6 +386,131 @@ public final class TemplateStateManager {
 						m_log.remove();
 					}
 				}
+			}
+
+
+			private final class StateManagement {
+				private final TemplateState m_state;
+				private final Promise<TemplateRef> m_reachedStatePromise = m_myEventLoop.newPromise();
+				private FastLinkedList<ListenerHolder> m_listeners = new FastLinkedList<>();
+				private ITemplateStateSyncListener m_systemPreListener;
+				private ITemplateStateSyncListener m_systemPostListener;
+				
+				StateManagement(TemplateState state) {
+					m_state = state;
+					m_reachedStatePromise.addListener((statePromise) -> {
+						final boolean successful = statePromise.isSuccess();
+						if (m_systemPreListener != null) {
+							m_systemPreListener.onStateReached(successful);
+						}
+						final FastLinkedList<ListenerHolder> listeners;
+						synchronized(StateManagement.this) {
+							listeners = m_listeners;
+							m_listeners = null;
+						}
+						final TSPromiseCombiner tsp = new TSPromiseCombiner();
+						listeners.forEach((holder) -> {
+							final ITemplateStateListener listener = holder.m_listener;
+							if (listener instanceof ITemplateStateSyncListener) {
+								tsp.add(NeuronApplication.getTaskPool().submit(() -> {
+									NeuronSystemTLS.add(InstanceManagement.this);
+									try {
+										((ITemplateStateSyncListener)listener).onStateReached(successful);
+									} catch(Exception ex) {
+										NeuronApplication.logError(LOG, "Exception calling state listener", ex);
+									} finally {
+										NeuronSystemTLS.remove();
+									}
+								}));
+							} else {
+								Promise<Void> promise = m_myEventLoop.newPromise();
+								tsp.add(promise);
+								NeuronSystemTLS.add(InstanceManagement.this);
+								try {
+									((ITemplateStateAsyncListener)listener).onStateReached(successful, promise);
+								} catch(Exception ex) {
+									NeuronApplication.logError(LOG, "Exception calling state listener", ex);
+								} finally {
+									NeuronSystemTLS.remove();
+								}
+							}
+							return true;
+						});
+						if (m_systemPostListener != null) {
+							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
+							aggregatePromise.addListener((f) -> {
+								// Once all listener calls are done, we can let the system process
+								m_systemPostListener.onStateReached(successful);
+							});
+							tsp.finish(aggregatePromise);
+						}
+					});
+				}
+				
+				void setPreListener(ITemplateStateSyncListener listener) {
+					m_systemPreListener = listener;
+				}
+				
+				void setPostListener(ITemplateStateSyncListener listener) {
+					m_systemPostListener = listener;
+				}
+				
+				ITemplateStateListenerRemoval addListener(ITemplateStateListener listener, TemplateState currentState) {
+					synchronized(this) {
+						// m_listeners goes null once the promise has been set complete and the callback has been called
+						// until that time, we can keep adding to it
+						if (m_listeners != null) {
+							ListenerHolder h = new ListenerHolder(listener);
+							m_listeners.addFirst(h);
+							return h;
+						}
+					}
+					// Cannot add async listeners for a state already reached.  These listeners'
+					// main purpose is to keep the state from switching until they trigger the
+					// promise
+					if (listener instanceof ITemplateStateAsyncListener) {
+						throw new IllegalArgumentException("Cannot add async listener to state " + m_state + ", the template is already in the state " + currentState);
+					}
+					// Our promise listener has fired and will not call any additional listeners, call it on this thread
+					NeuronSystemTLS.add(InstanceManagement.this);
+					try {
+						if (listener instanceof ITemplateStateSyncListener) {
+							((ITemplateStateSyncListener)listener).onStateReached(m_reachedStatePromise.isSuccess());
+//						} else {
+//							// The promise is ignored, since we already reached the state
+//							((ITemplateStateAsyncListener)listener).onStateReached(m_reachedStatePromise.isSuccess(), m_myEventLoop.newPromise());
+						}
+					} catch(Exception ex) {
+						NeuronApplication.logError(LOG, "Exception calling state listener", ex);
+					} finally {
+						NeuronSystemTLS.remove();
+					}
+					return null;
+				}
+				
+				private final class ListenerHolder extends FastLinkedList.LLNode<ListenerHolder> implements ITemplateStateListenerRemoval {
+					private final ITemplateStateListener m_listener;
+					
+					ListenerHolder(ITemplateStateListener listener) {
+						m_listener = listener;
+					}
+					
+					@Override
+					protected ListenerHolder getObject() {
+						return this;
+					}
+
+					@Override
+					public void remove() {
+						synchronized(StateManagement.this) {
+							if (m_listeners != null) {
+								m_listeners.remove(this);
+							}
+						}
+					}
+					
+				}
+				
 			}
 
 			private final class StateLock implements ITemplateStateLock {
@@ -435,29 +557,19 @@ public final class TemplateStateManager {
 				}
 
 				@Override
-				public Future<TemplateRef> getStateFuture(TemplateState forState) {
-					return InstanceManagement.this.getStateFuture(forState);
-				}
-
-				@Override
-				public boolean isStateOneOf(TemplateState... states) {
+				public ITemplateStateListenerRemoval addStateListener(TemplateState state, ITemplateStateSyncListener listener) {
 					if (!m_locked) {
 						throw new IllegalStateException("unlock() was already called");
 					}
-					for(TemplateState s : states) {
-						if (s == m_state) {
-							return true;
-						}
-					}
-					return false;
+					return getStateManager(state).addListener(listener, m_state);
 				}
-
+				
 				@Override
-				public void addStateListener(TemplateState state, GenericFutureListener<? extends Future<? super TemplateRef>> listener) {
+				public ITemplateStateListenerRemoval addStateAsyncListener(TemplateState state, ITemplateStateAsyncListener listener) {
 					if (!m_locked) {
 						throw new IllegalStateException("unlock() was already called");
 					}
-					getStateFuture(state).addListener(listener);
+					return getStateManager(state).addListener(listener, m_state);
 				}
 				
 				@Override
@@ -498,7 +610,7 @@ public final class TemplateStateManager {
 		try {
 			template.init(initDone);
 		} catch(Exception ex) {
-			NeuronApplication.logError(LOG, "Exception thrown from template.init()", ex);
+//			NeuronApplication.logError(LOG, "Exception thrown from template.init()", ex);
 			initDone.tryFailure(ex);
 			return;
 		}

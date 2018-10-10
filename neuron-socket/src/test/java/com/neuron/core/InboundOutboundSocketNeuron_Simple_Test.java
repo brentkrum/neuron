@@ -46,8 +46,8 @@ public class InboundOutboundSocketNeuron_Simple_Test {
 		System.setProperty("io.netty.leakDetection.targetRecords", "1");
 
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
-		TemplateStateManager.registerTemplate("OutboundSocketNeuronTemplate", OutboundSocketNeuronTemplate.class).bringOnline().awaitUninterruptibly();
-		TemplateStateManager.registerTemplate("InboundSocketNeuronTemplate", InboundSocketNeuronTemplate.class).bringOnline().awaitUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("OutboundSocketNeuronTemplate", OutboundSocketNeuronTemplate.class).awaitUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("InboundSocketNeuronTemplate", InboundSocketNeuronTemplate.class).awaitUninterruptibly();
 	}
 
 	@AfterAll
@@ -83,7 +83,7 @@ public class InboundOutboundSocketNeuron_Simple_Test {
 
 		// Bring test neuron online
 		LogManager.getLogger(InboundOutboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Create and bring Test Neuron online");
-		TemplateStateManager.registerTemplate("TestWriterTemplate", TestWriterTemplate.class).bringOnline().awaitUninterruptibly();
+		TemplateStateManagerTestUtils.registerAndBringOnline("TestWriterTemplate", TestWriterTemplate.class).awaitUninterruptibly();
 		INeuronManagement nTest = NeuronStateManager.registerNeuron("TestWriterTemplate", "TestNeuron");
 		assertTrue(nTest.bringOnline(ObjectConfigBuilder.config().build()));
 		assertTrue(NeuronStateManagerTestUtils.createFutureForState(nTest.currentRef(), NeuronState.Online).awaitUninterruptibly(1000));
@@ -128,7 +128,7 @@ public class InboundOutboundSocketNeuron_Simple_Test {
 		}
 		
 		private static class Neuron extends DefaultNeuronInstanceBase {
-			private static final Logger LOG = LogManager.getLogger(Neuron.class);
+//			private static final Logger LOG = LogManager.getLogger(Neuron.class);
 			private BytePipeSystem.IPipeWriterContext m_outboundWriterContext;
 			private MessagePipeSystem.IPipeWriterContext m_inboundWriterContext;
 			

@@ -6,8 +6,7 @@ import org.apache.logging.log4j.Level;
 
 import com.neuron.core.TemplateStateManager.TemplateState;
 
-import io.netty.util.concurrent.Future;
-import io.netty.util.concurrent.GenericFutureListener;
+import io.netty.util.concurrent.Promise;
 
 public abstract class TemplateRef {
 	private final int m_id;
@@ -43,14 +42,36 @@ public abstract class TemplateRef {
 	public abstract ITemplateStateLock lockState();
 	
 	public interface ITemplateStateLock extends AutoCloseable, ITemplateStateLockInternal {
-		Future<TemplateRef> getStateFuture(TemplateState forState);
-		void addStateListener(TemplateState state, GenericFutureListener<? extends Future<? super TemplateRef>> listener);
+		ITemplateStateListenerRemoval addStateListener(TemplateState state, ITemplateStateSyncListener listener);
+		ITemplateStateListenerRemoval addStateAsyncListener(TemplateState state, ITemplateStateAsyncListener listener);
 		
 		TemplateState currentState();
-		boolean isStateOneOf(TemplateState... states);
+		default boolean isStateOneOf(TemplateState... states) {
+			final TemplateState cur = currentState();
+			for(TemplateState s : states) {
+				if (s == cur) {
+					return true;
+				}
+			}
+			return false;
+		}
 		
 		boolean takeOffline();
 		void unlock();
 		void close();
+	}
+	
+	public interface ITemplateStateListener {
+	}
+	public interface ITemplateStateSyncListener extends ITemplateStateListener {
+		void onStateReached(boolean successful);
+	}
+	
+	public interface ITemplateStateAsyncListener extends ITemplateStateListener {
+		void onStateReached(boolean successful, Promise<Void> promise);
+	}
+	
+	public interface ITemplateStateListenerRemoval {
+		void remove();
 	}
 }
