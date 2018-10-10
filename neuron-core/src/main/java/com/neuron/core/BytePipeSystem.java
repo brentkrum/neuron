@@ -645,8 +645,7 @@ public final class BytePipeSystem
 				return false;
 			}
 			if (m_reader == null) {
-				buf.release();
-				return true;
+				return false;
 			}
 			if (m_count == 0) {
 				if (!m_reader.writeThrough(buf)) {

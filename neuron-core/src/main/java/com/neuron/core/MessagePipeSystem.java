@@ -517,8 +517,7 @@ public final class MessagePipeSystem
 				return false;
 			}
 			if (m_reader == null) {
-				msg.release();
-				return true;
+				return false;
 			}
 			if (m_count == 0) {
 				if (!m_reader.writeThrough(msg)) {

@@ -186,7 +186,8 @@ public final class IntTrie<TValue> {
 			}
 		}
 	}
-	
+
+	@FunctionalInterface
 	public interface IForEach<T> {
 		/**
 		 * Walks the entire list calling the method for each item
@@ -194,7 +195,7 @@ public final class IntTrie<TValue> {
 		 * @param object
 		 * @return true to continue iteration, false to end it
 		 */
-		boolean process(T object);
+		boolean process(int key, T object);
 	}
 	public void forEach(IForEach<TValue> callback) {
 		forEach0(m_root, callback);
@@ -214,7 +215,7 @@ public final class IntTrie<TValue> {
 			}
 			if (n instanceof ValueNode) {
 				ValueNode v = (ValueNode)n;
-				boolean keepGoing = callback.process((TValue)v.m_value);
+				boolean keepGoing = callback.process(v.m_key, (TValue)v.m_value);
 				if (!keepGoing) {
 					return false;
 				}

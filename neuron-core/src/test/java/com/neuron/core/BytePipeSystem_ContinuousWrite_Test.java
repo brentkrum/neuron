@@ -57,7 +57,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 		ITemplateManagement tMgtB = TemplateStateManager.registerTemplate("RWTestTemplateB", RWTestTemplateB.class);
 		INeuronManagement nMgtB = NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB");
 
-		for(int i=0; i<20; i++) {
+		for(int i=0; i<100; i++) {
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Template B online");
 			assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgtB).syncUninterruptibly().isSuccess());
 			
@@ -66,8 +66,8 @@ public class BytePipeSystem_ContinuousWrite_Test {
 			assertTrue(createFutureForState(nMgtB.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron B to enter Online state");
 			
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Running test - {}", i);
-			// Let the test run for 250ms
-			m_testFuture.awaitUninterruptibly(250);
+			// Let the test run for 25ms
+			m_testFuture.awaitUninterruptibly(25);
 			if (m_testFuture.isDone() && !m_testFuture.isSuccess()) {
 				Assertions.fail(m_testFuture.cause());
 			}
@@ -140,7 +140,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 				
 				@Override
 				protected void _doWork(INeuronStateLock lock) {
-//					LogManager.getLogger(NeuronA.class).info(">>>>>>>> ConstantWriter writing. Neuron state={}", lock.currentState());
+//					LogManager.getLogger(NeuronA.class).info("ConstantWriter writing. Neuron state={}", lock.currentState());
 					try {
 						while(!m_shutdown) {
 							if (m_current == null) {
@@ -157,6 +157,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 					} catch(Exception ex) {
 						m_testFuture.tryFailure(ex);
 					}
+//					LogManager.getLogger(NeuronA.class).info("ConstantWriter stopped. Neuron state={}", lock.currentState());
 				}
 				
 			}

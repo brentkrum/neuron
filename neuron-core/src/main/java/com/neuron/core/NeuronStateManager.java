@@ -65,6 +65,19 @@ public final class NeuronStateManager {
 		}
 	}
 	
+	static NeuronRef currentRef(int neuronId) {
+		m_rwLock.readLock().lock();
+		try {
+			final Management mgt = m_neuronsById.get(neuronId);
+			if (mgt == null) {
+				return null;
+			}
+			return mgt.currentRef();
+		} finally {
+			m_rwLock.readLock().unlock();
+		}
+	}
+	
 	public static INeuronManagement manage(String neuronName) {
 		m_rwLock.readLock().lock();
 		try {

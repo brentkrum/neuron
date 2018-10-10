@@ -70,9 +70,8 @@ class MessagePipeWriterContext implements IPipeWriterContext, IMessagePipeWriter
 	public boolean offer(ReferenceCounted msg) {
 		final PipeBroker broker = m_broker;
 		if (broker == null) {
-			// The broker has closed this writer, so silently let the buffer disappear
-			msg.release();
-			return true;
+			// The broker has closed this writer, so pipe is "full"
+			return false;
 		}
 		return broker.tryWrite(msg);
 	}

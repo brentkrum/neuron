@@ -139,7 +139,7 @@ public final class TemplateStateManager {
 			private final StateManagement m_stateMgt[] = new StateManagement[TemplateState.values().length];
 			private final EventLoop m_myEventLoop;
 			private final LinkedList<NeuronLogEntry> m_log = new LinkedList<>();
-			private final IntTrie<Boolean> m_activeNeuronsById = new IntTrie<>();
+			private final IntTrie<NeuronRef> m_activeNeuronsByGen = new IntTrie<>();
 			private INeuronTemplate m_template;
 			private TemplateState m_state = TemplateState.NA;
 			private int m_stateLockCount;
@@ -184,14 +184,22 @@ public final class TemplateStateManager {
 				getStateManager(TemplateState.TakeNeuronsOffline).setPostListener((isSuccessful) -> {
 					if (isSuccessful) {
 						try(ITemplateStateLock templateLock = lockState()) {
-							if (templateLock.currentState() == TemplateState.TakeNeuronsOffline) {
-								final int neuronsLeft;
-								synchronized(m_activeNeuronsById) {
-									neuronsLeft = m_activeNeuronsById.count();
-								}
-								if (neuronsLeft == 0) {
-									setState(TemplateState.SystemOffline);
-								}
+							final int neuronsLeft;
+							synchronized(m_activeNeuronsByGen) {
+								neuronsLeft = m_activeNeuronsByGen.count();
+//								if (neuronsLeft > 0) {
+//									m_activeNeuronsByGen.forEach((key, value) -> {
+//										try(INeuronStateLock nlock = value.lockState()) {
+//											LOG.error("Neuron {} is in state {} and still attached", value.logString(), nlock.currentState());
+//										}
+//										return true;
+//									});
+//								}
+							}
+							if (neuronsLeft == 0) {
+								setState(TemplateState.SystemOffline);
+//							} else {
+//								LOG.error("There are {} neurons still online", neuronsLeft);
 							}
 						}
 					}
@@ -525,25 +533,38 @@ public final class TemplateStateManager {
 				
 				@Override
 				public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config) {
-					synchronized(m_activeNeuronsById) {
-						m_activeNeuronsById.addOrFetch(ref.id(), Boolean.TRUE);
+					synchronized(m_activeNeuronsByGen) {
+						if (m_activeNeuronsByGen.addOrFetch(ref.generation(), ref) != null) {
+							LOG.fatal("Added a neuron reference which already existed.  This should never happen.", new RuntimeException("Just for the stack trace"));
+							NeuronApplication.fatalExit();
+						}
 					}
 					try(INeuronStateLock neuronLock = ref.lockState()) {
 						neuronLock.addStateListener(NeuronState.Offline, (success) -> {
 							final int neuronsLeft;
-							synchronized(m_activeNeuronsById) {
-								m_activeNeuronsById.remove(ref.id());
-								neuronsLeft = m_activeNeuronsById.count();
+							synchronized(m_activeNeuronsByGen) {
+								if (m_activeNeuronsByGen.remove(ref.generation()) == null) {
+									LOG.fatal("A neuron reference did not exist.  This should never happen.", new RuntimeException("Just for the stack trace"));
+									NeuronApplication.fatalExit();
+								}
+								neuronsLeft = m_activeNeuronsByGen.count();
+//								if (neuronsLeft > 0) {
+//									m_activeNeuronsByGen.forEach((key, value) -> {
+//										try(INeuronStateLock nlock = value.lockState()) {
+//											LOG.error("(2)Neuron {} is in state {} and still attached", value.logString(), nlock.currentState());
+//										}
+//										return true;
+//									});
+//								}
 							}
 							if (neuronsLeft == 0) {
-								try(ITemplateStateLock templateLock = lockState()) {
-									if (templateLock.currentState() == TemplateState.TakeNeuronsOffline) {
-										setState(TemplateState.SystemOffline);
-									}
-								}
+								setState(TemplateState.SystemOffline);
+//							} else {
+//								LOG.error("(2)There are {} neurons still online", neuronsLeft);
 							}
 						});
 					}
+					// Exceptions are handled by NeuronStateManager
 					INeuronInitialization neuron = m_template.createNeuron(ref, config);
 					return neuron;
 				}

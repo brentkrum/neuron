@@ -123,7 +123,7 @@ public class StatusSystem
 	public static List<CurrentStatus> getCurrentStatus() {
 		final List<CurrentStatus> out = new LinkedList<>();
 		synchronized(m_templateLock) {
-			m_templateStatusTrie.forEach((h) -> {
+			m_templateStatusTrie.forEach((key, h) -> {
 				CurrentStatus cs = h.getCurrentStatus();
 				if (cs != null) {
 					out.add(cs);
@@ -132,7 +132,7 @@ public class StatusSystem
 			});
 		}
 		synchronized(m_neuronLock) {
-			m_neuronStatusTrie.forEach((h) -> {
+			m_neuronStatusTrie.forEach((key, h) -> {
 				CurrentStatus cs = h.getCurrentStatus();
 				if (cs != null) {
 					out.add(cs);

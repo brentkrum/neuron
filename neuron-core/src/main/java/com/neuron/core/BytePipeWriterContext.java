@@ -175,9 +175,8 @@ class BytePipeWriterContext implements IPipeWriterContext, IBytePipeWriter {
 		public boolean tryClose() {
 			final BytePipeSystem.PipeBroker broker = m_broker;
 			if (broker == null) {
-				// The broker has closed this writer, so silently let the buffer disappear
-				m_temp.release();
-				return true;
+				// The broker has closed this writer, so "pipe is full"
+				return false;
 			}
 			if (m_temp.refCnt() > 1) {
 				throw new IllegalStateException("The buffer supplied by this writer had its retain() method called.  This is not allowed");
