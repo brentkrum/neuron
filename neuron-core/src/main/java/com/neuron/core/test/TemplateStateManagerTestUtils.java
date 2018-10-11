@@ -18,6 +18,10 @@ import io.netty.util.concurrent.Promise;
 public final class TemplateStateManagerTestUtils {
 	private static final DateFormat m_dtFormatter = SimpleDateFormat.getDateTimeInstance(SimpleDateFormat.SHORT,SimpleDateFormat.SHORT);
 	
+	public static Future<Void> createFutureForState(String templateName, TemplateState state) {
+		return createFutureForState(TemplateStateManager.manage(templateName).currentRef(), state);
+	}
+	
 	public static Future<Void> createFutureForState(TemplateRef ref, TemplateState state) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
 		try(ITemplateStateLock lock = ref.lockState()) {

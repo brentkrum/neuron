@@ -9,6 +9,14 @@ import io.netty.util.internal.PlatformDependent;
 
 public final class NeuronSystemTLS
 {
+	enum ThingType { None, Group, Template, Neuron};
+	
+	static void add(GroupRef ref) {
+		Object prev = NeuronThreadContext.get().pushThingStack(ref);
+		if (ref != prev) {
+			setLog4jThreadContextValues(ref);
+		}
+	}
 	static void add(TemplateRef ref) {
 		Object prev = NeuronThreadContext.get().pushThingStack(ref);
 		if (ref != prev) {
@@ -21,16 +29,6 @@ public final class NeuronSystemTLS
 			setLog4jThreadContextValues(ref);
 		}
 	}
-//	private static void _add(Object ref) {
-//		Object prev = NeuronThreadContext.get().pushThingStack(ref);
-//		if (ref != prev) {
-//			if (ref instanceof NeuronRef) {
-//				setLog4jThreadContextValues((NeuronRef)ref);
-//			} else {
-//				setLog4jThreadContextValues((TemplateRef)ref);
-//			}
-//		}
-//	}
 	
 	static void remove() {
 		final NeuronThreadContext tls = NeuronThreadContext.get();
@@ -39,9 +37,22 @@ public final class NeuronSystemTLS
 		if (prev != cur) {
 			if (cur instanceof NeuronRef) {
 				setLog4jThreadContextValues((NeuronRef)cur);
+			} else if (cur instanceof TemplateRef) {
+					setLog4jThreadContextValues((TemplateRef)cur);
 			} else {
-				setLog4jThreadContextValues((TemplateRef)cur);
+				setLog4jThreadContextValues((GroupRef)cur);
 			}
+		}
+	}
+
+	static GroupRef currentGroup() {
+		final Object cur = NeuronThreadContext.get().currentThing();
+		if (cur instanceof NeuronRef) {
+			return ((NeuronRef)cur).templateRef().groupRef();
+		} else if (cur instanceof TemplateRef) {
+			return ((TemplateRef)cur).groupRef();
+		} else {
+			return (GroupRef)cur;
 		}
 	}
 	
@@ -49,8 +60,10 @@ public final class NeuronSystemTLS
 		final Object cur = NeuronThreadContext.get().currentThing();
 		if (cur instanceof NeuronRef) {
 			return ((NeuronRef)cur).templateRef();
-		} else {
+		} else if (cur instanceof TemplateRef) {
 			return (TemplateRef)cur;
+		} else {
+			return null;
 		}
 	}
 	
@@ -63,9 +76,22 @@ public final class NeuronSystemTLS
 		}
 	}
 	
-	static boolean isNeuronCurrent() {
+	static ThingType whatIsCurrent() {
 		final Object cur = NeuronThreadContext.get().currentThing();
-		if (cur instanceof NeuronRef) {
+		if (cur == null) {
+			return ThingType.None;
+		} else if (cur instanceof NeuronRef) {
+			return ThingType.Neuron;
+		} else if (cur instanceof TemplateRef) {
+			return ThingType.Template;
+		} else {
+			return ThingType.Group;
+		}
+	}
+	
+	static boolean isTemplateCurrent() {
+		final Object cur = NeuronThreadContext.get().currentThing();
+		if (cur instanceof TemplateRef) {
 			return true;
 		} else {
 			return false;
@@ -121,19 +147,33 @@ public final class NeuronSystemTLS
 	}
 	
 	
+	private static void setLog4jThreadContextValues(GroupRef groupRef) {
+		if (groupRef == null) {
+			ThreadContext.remove("nG");
+		} else {
+			ThreadContext.put("nG", groupRef.logString());
+		}
+		ThreadContext.remove("nT");
+		ThreadContext.remove("nI");
+	}	
+	
 	private static void setLog4jThreadContextValues(TemplateRef templateRef) {
 		if (templateRef == null) {
+			ThreadContext.remove("nG");
 			ThreadContext.remove("nT");
 		} else {
+			ThreadContext.put("nG", templateRef.groupRef().logString());
 			ThreadContext.put("nT", templateRef.logString());
 		}
 		ThreadContext.remove("nI");
 	}	
 	private static void setLog4jThreadContextValues(NeuronRef neuronRef) {
 		if (neuronRef == null) {
+			ThreadContext.remove("nG");
 			ThreadContext.remove("nT");
 			ThreadContext.remove("nI");
 		} else {
+			ThreadContext.put("nG", neuronRef.templateRef().groupRef().logString());
 			ThreadContext.put("nT", neuronRef.templateRef().logString());
 			ThreadContext.put("nI", neuronRef.logString());
 		}

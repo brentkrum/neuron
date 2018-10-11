@@ -15,11 +15,13 @@ public class StatusSystem
 	public enum StatusType { Up, Down, Intermittent, Online, Offline, GoingOnline, GoingOffline} ;
 	
 	private static final Logger LOG = LogManager.getLogger(StatusSystem.class);
+	private static final int HOST_STATUS_TRAIL_SIZE = Config.getFWInt("core.StatusSystem.hostStatusTrailSize", 16);
+	private static final int NEURON_STATUS_TRAIL_SIZE = Config.getFWInt("core.StatusSystem.neuronStatusTrailSize", 16);
 	private static final int TEMPLATE_STATUS_TRAIL_SIZE = Config.getFWInt("core.StatusSystem.templateStatusTrailSize", 16);
+	private static final int GROUP_STATUS_TRAIL_SIZE = Config.getFWInt("core.StatusSystem.groupStatusTrailSize", 16);
 	
-//	private static final ReadWriteLock m_typeLock = new ReentrantReadWriteLock(true);
-//	private static final CharSequenceTrie<String> m_types = new CharSequenceTrie<>();
-//	private static final List<String> m_typesList = new LinkedList<>();
+	private static final Object m_groupLock = new Object();
+	private static final IntTrie<GroupStatusHolder> m_groupStatusTrie = new IntTrie<>();
 	
 	private static final Object m_templateLock = new Object();
 	private static final IntTrie<TemplateStatusHolder> m_templateStatusTrie = new IntTrie<>();
@@ -29,27 +31,25 @@ public class StatusSystem
 	
 	private static final Object m_hostLock = new Object();
 	private static final CharSequenceTrie<HostStatusHolder> m_hostStatusTrie = new CharSequenceTrie<>();
-	
-//	static {
-//		m_types.addOrFetch(NEURON_TEMPLATE_TYPE_NAME, "");
-//		m_typesList.add(NEURON_TEMPLATE_TYPE_NAME);
-//		m_types.addOrFetch(NEURON_INSTANCE_TYPE_NAME, "");
-//		m_typesList.add(NEURON_INSTANCE_TYPE_NAME);
-//	}
 
 	static void register() {
 		NeuronApplication.register(new Registrant());
 	}
-//	
-//	public static void setStatus(String neuronTemplateName, int neuronTemplateId, String neuronInstanceName, int neuronInstanceId, String status) {
-//	}
-//	
-//	public static void setStatus(int neuronTemplateId, int neuronInstanceId, String status) {
-//		String neuronTemplateName = NeuronSystem.getNeuronTemplateName(neuronTemplateId);
-//		//String neuronInstanceName = NeuronSystem.getNeuronName(neuronTemplateId);
-//		String neuronInstanceName = null;
-//		setStatus(neuronTemplateName, neuronTemplateId, neuronInstanceName, neuronInstanceId, status);
-//	}
+
+	public static void setStatus(GroupRef ref, StatusType status, String reasonText) {
+		synchronized(m_groupLock) {
+			GroupStatusHolder h = m_groupStatusTrie.get(ref.id());
+			if (h == null) {
+				h = new GroupStatusHolder(ref);
+				m_groupStatusTrie.addOrFetch(ref.id(), h);
+			}
+			h.addStatusTrail(ref, status, reasonText);
+		}
+		if (LOG.isDebugEnabled()) {
+			LOG.debug("{}: {} {}", ref.logString(), status, reasonText);
+		}
+	}
+	
 	public static void setStatus(TemplateRef ref, StatusType status, String reasonText) {
 		synchronized(m_templateLock) {
 			TemplateStatusHolder h = m_templateStatusTrie.get(ref.id());
@@ -122,6 +122,15 @@ public class StatusSystem
 	
 	public static List<CurrentStatus> getCurrentStatus() {
 		final List<CurrentStatus> out = new LinkedList<>();
+		synchronized(m_groupLock) {
+			m_groupStatusTrie.forEach((key, h) -> {
+				CurrentStatus cs = h.getCurrentStatus();
+				if (cs != null) {
+					out.add(cs);
+				}
+				return true;
+			});
+		}
 		synchronized(m_templateLock) {
 			m_templateStatusTrie.forEach((key, h) -> {
 				CurrentStatus cs = h.getCurrentStatus();
@@ -184,6 +193,16 @@ public class StatusSystem
 		
 	}
 	
+	public static class CurrentGroupStatus extends CurrentStatus {
+		public final GroupRef groupRef;
+		
+		CurrentGroupStatus(long timestamp, StatusType status, String reasonText, GroupRef ref) {
+			super(timestamp, status, reasonText);
+			this.groupRef = ref;
+		}
+		
+	}
+	
 	public static class CurrentHostStatus extends CurrentStatus {
 		public final boolean isInbound;
 		public final String hostAndPort;
@@ -199,15 +218,48 @@ public class StatusSystem
 	private static class StatusHolder {
 		private final FastLinkedList<StatusEntry> m_statusTrail = new FastLinkedList<>(); // Keep the last X status entries
 		
-		protected void _addStatusTrail(StatusEntry entry) {
+		protected void _addStatusTrail(int maxTrailSize, StatusEntry entry) {
 			m_statusTrail.add(entry);
-			while (m_statusTrail.count() > TEMPLATE_STATUS_TRAIL_SIZE) {
+			while (m_statusTrail.count() > maxTrailSize) {
 				m_statusTrail.removeFirst();
 			}
 		}
 		
 		protected StatusEntry getMostRecentStatus() {
 			return m_statusTrail.peekLast();
+		}
+	}
+	
+	@SuppressWarnings("unused")
+	private static class GroupStatusHolder extends StatusHolder{
+		private final int m_id;
+		private final String m_name;
+		
+		GroupStatusHolder(GroupRef ref) {
+			m_id = ref.id();
+			m_name = ref.name();
+		}
+		
+		CurrentStatus getCurrentStatus() {
+			GroupStatusEntry e = (GroupStatusEntry)getMostRecentStatus();
+			if (e == null) {
+				return null;
+			}
+			return new CurrentGroupStatus(e.timestamp, e.status, e.reasonText, e.m_ref);
+		}
+		
+		public void addStatusTrail(GroupRef ref, StatusType status, String reasonText) {
+			_addStatusTrail(GROUP_STATUS_TRAIL_SIZE, new GroupStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
+		}
+		
+		private static class GroupStatusEntry extends StatusEntry {
+			private final GroupRef m_ref;
+			
+			GroupStatusEntry(long timestamp, StatusType status, String reasonText, GroupRef ref) {
+				super(timestamp, status, reasonText);
+				this.m_ref = ref;
+			}
+			
 		}
 	}
 	
@@ -230,7 +282,7 @@ public class StatusSystem
 		}
 		
 		public void addStatusTrail(TemplateRef ref, StatusType status, String reasonText) {
-			_addStatusTrail(new TemplateStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
+			_addStatusTrail(TEMPLATE_STATUS_TRAIL_SIZE, new TemplateStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
 		}
 		
 		private static class TemplateStatusEntry extends StatusEntry {
@@ -263,7 +315,7 @@ public class StatusSystem
 		}
 		
 		public void addStatusTrail(NeuronRef ref, StatusType status, String reasonText) {
-			_addStatusTrail(new NeuronStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
+			_addStatusTrail(NEURON_STATUS_TRAIL_SIZE, new NeuronStatusEntry(System.currentTimeMillis(), status, reasonText, ref));
 		}
 		
 		private static class NeuronStatusEntry extends StatusEntry {
@@ -295,7 +347,7 @@ public class StatusSystem
 		}
 		
 		public void addStatusTrail(StatusType status, String reasonText) {
-			_addStatusTrail(new StatusEntry(System.currentTimeMillis(), status, reasonText));
+			_addStatusTrail(HOST_STATUS_TRAIL_SIZE, new StatusEntry(System.currentTimeMillis(), status, reasonText));
 		}
 	}
 	

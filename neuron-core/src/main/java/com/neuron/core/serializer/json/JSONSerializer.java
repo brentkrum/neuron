@@ -1,4 +1,4 @@
-package com.neuron.core;
+package com.neuron.core.serializer.json;
 
 import com.fasterxml.jackson.annotation.PropertyAccessor;
 import com.fasterxml.jackson.annotation.JsonAutoDetect.Visibility;
@@ -8,6 +8,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.neuron.core.serializer.SerializerBase;
 
 public abstract class JSONSerializer extends SerializerBase {
 	private static final ObjectMapper m_jsonSerializer;

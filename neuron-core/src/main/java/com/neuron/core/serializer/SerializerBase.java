@@ -1,4 +1,4 @@
-package com.neuron.core;
+package com.neuron.core.serializer;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.ObjectMapper;

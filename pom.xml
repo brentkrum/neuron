@@ -34,6 +34,7 @@
 				<module>neuron-parent</module>
 				<module>neuron-utility</module>
 				<module>neuron-core</module>
+				<module>neuron-yaml</module>
 				<module>neuron-socket</module>
 				<module>neuron-javascript</module>
 				<module>neuron-starters</module>

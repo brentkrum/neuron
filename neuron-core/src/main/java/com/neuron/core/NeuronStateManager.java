@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.StatusSystem.StatusType;
+import com.neuron.core.TemplateRef.ITemplateStateListenerRemoval;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.netty.TSPromiseCombiner;
@@ -133,39 +134,41 @@ public final class NeuronStateManager {
 		@Override
 		public boolean bringOnline(ObjectConfig config) {
 			final TemplateRef currentTemplateRef = TemplateStateManager.manage(m_templateName).currentRef();
-			try(final ITemplateStateLock lock = currentTemplateRef.lockState()) {
-				if (lock.currentState() != TemplateState.Online) {
+			try(final ITemplateStateLock templateLock = currentTemplateRef.lockState()) {
+				if (templateLock.currentState() != TemplateState.Online) {
 					final TemplateNotOnlineException ex = new TemplateNotOnlineException(currentTemplateRef);
-					NeuronApplication.logError(LOG, "Failed creating an instance of neuron. Template {} is in the {} state", m_templateName, lock.currentState(), ex);
+					NeuronApplication.logError(LOG, "Failed creating an instance of neuron. Template {} is in the {} state", m_templateName, templateLock.currentState(), ex);
 					return false;
 				}
-			}
 			
-			final InstanceManagement mgt;
-			synchronized(this) {
-				if (m_current != null) {
-					try(final INeuronStateLock lock = m_current.lockState()) {
-						if (lock.currentState().ordinal() <= NeuronState.Online.ordinal()) {
-							return true;
+				final InstanceManagement mgt;
+				synchronized(this) {
+					if (m_current != null) {
+						try(final INeuronStateLock lock = m_current.lockState()) {
+							if (lock.currentState().ordinal() <= NeuronState.Online.ordinal()) {
+								return true;
+							}
+							if (lock.currentState() != NeuronState.Offline) {
+								return false;
+							}
 						}
-						if (lock.currentState() != NeuronState.Offline) {
-							return false;
+						m_oldGen.add(m_current);
+						while(m_oldGen.size() > MAX_OLD_GEN) {
+							m_oldGen.remove();
 						}
 					}
-					m_oldGen.add(m_current);
-					while(m_oldGen.size() > MAX_OLD_GEN) {
-						m_oldGen.remove();
-					}
+					// This is the only place that m_current is ever modified
+					m_current = new InstanceManagement(currentTemplateRef, m_nextNeuronGen.incrementAndGet(), config);
+					mgt = m_current;
 				}
-				// This is the only place that m_current is ever modified
-				m_current = new InstanceManagement(currentTemplateRef, m_nextNeuronGen.incrementAndGet(), config);
-				mgt = m_current;
+				((ITemplateStateLockInternal)templateLock).registerNeuron(m_current);
+				
+				// At this point it is safe to use it outside the lock
+				// It currently is in the state of NA and there is no way to change that except
+				// by the thread there is here.
+				
+				mgt.setState(NeuronState.BeingCreated);
 			}
-			// At this point it is safe to use it outside the lock
-			// It currently is in the state of NA and there is no way to change that except
-			// by the thread there is here.
-			
-			mgt.setState(NeuronState.BeingCreated);
 
 			return true;
 		}
@@ -183,6 +186,7 @@ public final class NeuronStateManager {
 			private INeuronInitialization m_neuron;
 			private NeuronState m_state = NeuronState.NA;
 			private int m_stateLockCount;
+			private ITemplateStateListenerRemoval m_templateOfflineTrigger;
 			
 			private IntTrie<StateLock> m_lockTracking = new IntTrie<>();
 			private int m_nextLockTrackingId = 1;
@@ -224,6 +228,12 @@ public final class NeuronStateManager {
 				
 				// GoingOffline -> Disconnecting -> DeInitializing -> SystemOffline -> Offline
 				getStateManager(NeuronState.GoingOffline).setPostListener((boolean successful) -> {
+					synchronized(InstanceManagement.this) {
+						if (m_templateOfflineTrigger != null) {
+							m_templateOfflineTrigger.remove();
+							m_templateOfflineTrigger = null;
+						}
+					}
 					if (successful) {
 						setState(NeuronState.Disconnecting);
 					}
@@ -261,16 +271,24 @@ public final class NeuronStateManager {
 							abortToOffline(new RuntimeException("template.createNeuron() returned null"), false);
 							return;
 						}
-						// TODO need to remove the listener when we go offline (but only if the template is still online) <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-						lock.addStateListener(TemplateState.TakeNeuronsOffline, (isSuccess) -> {
-							if (isSuccess) {
-								try(INeuronStateLock offlineLock = m_current.lockState()) {
-									if (offlineLock.currentState() == NeuronState.Online) {
-										setState(NeuronState.GoingOffline);
+						synchronized(InstanceManagement.this) {
+							// When the template enters the state TakeNeuronsOffline
+							m_templateOfflineTrigger = lock.addStateListener(TemplateState.TakeNeuronsOffline, (isSuccess) -> {
+								if (isSuccess) {
+									try(INeuronStateLock neuronLock = InstanceManagement.this.lockState()) {
+										// If we are Online or headed that way
+										if (neuronLock.currentState().ordinal() <= NeuronState.Online.ordinal() ) {
+											// Add a listener to ourselves that triggers when we go Online
+											neuronLock.addStateListener(NeuronState.Online, (isSuccess2) -> {
+												if (isSuccess2) {
+													setState(NeuronState.GoingOffline);
+												}
+											});
+										}
 									}
 								}
-							}
-						});
+							});
+						}
 					} catch(Exception ex) {
 						NeuronApplication.logError(LOG, "template.createNeuron() threw an exception", ex);
 						abortToOffline(ex, false);
@@ -625,6 +643,7 @@ public final class NeuronStateManager {
 				private final Thread m_lockingThread;
 				private boolean m_locked = true;
 				private int m_lockTrackingId;
+				@SuppressWarnings("unused")
 				private StackTraceElement[] m_lockStackTrace;
 				
 				StateLock() {

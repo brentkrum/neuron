@@ -9,6 +9,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.neuron.core.NeuronLogEntry;
 import com.neuron.core.StatusSystem;
+import com.neuron.core.StatusSystem.CurrentGroupStatus;
 import com.neuron.core.StatusSystem.CurrentHostStatus;
 import com.neuron.core.StatusSystem.CurrentNeuronStatus;
 import com.neuron.core.StatusSystem.CurrentTemplateStatus;
@@ -36,6 +37,8 @@ public final class TestUtils {
 				if (includeLog) {
 					log = ((CurrentTemplateStatus)status).templateRef.getLog();
 				}
+			} else if (status instanceof CurrentGroupStatus) {
+				sb.append(((CurrentGroupStatus)status).groupRef.logString());
 			} else if (status instanceof CurrentHostStatus) {
 				if (((CurrentHostStatus)status).isInbound) {
 					sb.append("in:");

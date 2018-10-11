@@ -380,6 +380,8 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 					}
 					
 				} else {
+					// TODO add a retry timer when a bind failure because port is in use. <<<<<<<<<<<<<<<<<<<<<<<<<<<<<< 
+					// 	  it might just be a lazy cleanup of the socket from a previous run
 					String statusText = future.cause().getMessage();
 					Throwable cause = future.cause(); 
 					synchronized(InboundSocketNeuron.this) {

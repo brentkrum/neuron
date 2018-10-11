@@ -6,13 +6,17 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import com.neuron.core.GroupRef.IGroupStateLock;
+import com.neuron.core.GroupStateManager.GroupState;
+import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
+import com.neuron.core.test.GroupStateManagerTestUtils;
 import com.neuron.core.test.TemplateStateManagerTestUtils;
 import com.neuron.core.test.TestUtils;
 
 import io.netty.util.concurrent.Future;
 
-public class NeuronTemplate_Simple_Test
+public class NeuronGroupSimple_Test
 {
 	@BeforeAll
 	public static void init() {
@@ -27,18 +31,20 @@ public class NeuronTemplate_Simple_Test
 	}
 	
 	@Test
-	public void simpleSuccessfulOnlineOffline() {
-		TemplateStateManager.registerTemplate("TestTemplate", TestTemplate.class);
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline("TestTemplate");
+	public void groupOffline() {
+		TemplateStateManager.registerTemplate("TestTemplate2", TestTemplate.class);
+		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline("TestTemplate2");
 		assertTrue(f.awaitUninterruptibly(1000), "Timeout waiting for TestTemplate to go online");
 		assertTrue(f.isSuccess());
 
 		TestUtils.printSystemStatuses();
-
-		final Future<Void> offlineF = TemplateStateManagerTestUtils.takeTemplateOffline("TestTemplate");
-		assertTrue(offlineF.awaitUninterruptibly(1000), "Timeout waiting for template to go offline");
-		assertTrue(offlineF.isSuccess());
+		try(IGroupStateLock lock = GroupStateManager.defaultGroupRef().lockState()) {
+			assertTrue(lock.takeOffline());
+		}
+		assertTrue(GroupStateManagerTestUtils.createFutureForState(GroupStateManager.defaultGroupRef(), GroupState.Offline).awaitUninterruptibly(1000));
+		assertTrue(TemplateStateManagerTestUtils.createFutureForState("TestTemplate2", TemplateState.Offline).awaitUninterruptibly(1000));
 	}
+
 	public static class TestTemplate extends DefaultTestNeuronTemplateBase {
 		
 		public TestTemplate(TemplateRef ref)

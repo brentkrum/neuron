@@ -186,9 +186,10 @@ public final class NeuronApplication {
 			sb.append('\n');
 			StackTraceUtil.stackTraceFormat(sb, msg.getThrowable());
 		}
-		if (NeuronSystemTLS.isNeuronCurrent()) {
+		NeuronSystemTLS.ThingType tt = NeuronSystemTLS.whatIsCurrent();
+		if (tt == NeuronSystemTLS.ThingType.Neuron) {
 			NeuronSystemTLS.currentNeuron().log(neuronLevel, sb);
-		} else {
+		} else if (tt == NeuronSystemTLS.ThingType.Template) {
 			NeuronSystemTLS.currentTemplate().log(neuronLevel, sb);
 		}
 		return sb;

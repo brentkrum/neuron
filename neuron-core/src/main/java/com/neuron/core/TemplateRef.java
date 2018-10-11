@@ -9,16 +9,22 @@ import com.neuron.core.TemplateStateManager.TemplateState;
 import io.netty.util.concurrent.Promise;
 
 public abstract class TemplateRef {
+	private final GroupRef m_groupRef;
 	private final int m_id;
 	private final String m_name;
 	private final int m_generationId;
 	private final String m_logString;
 	
-	TemplateRef(int id, String name, int generationId) {
+	TemplateRef(GroupRef groupRef, int id, String name, int generationId) {
+		m_groupRef = groupRef;
 		m_id = id;
 		m_name = name;
 		m_generationId = generationId;
 		m_logString = m_name + "(" + generationId + ")";
+	}
+
+	public final GroupRef groupRef() {
+		return m_groupRef;
 	}
 
 	public final int id() {

@@ -13,6 +13,9 @@ import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
+import com.neuron.core.GroupRef.IGroupStateListenerRemoval;
+import com.neuron.core.GroupRef.IGroupStateLock;
+import com.neuron.core.GroupStateManager.GroupState;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
@@ -48,9 +51,13 @@ public final class TemplateStateManager {
 	}
 	
 	public static ITemplateManagement registerTemplate(String templateName, Class<? extends INeuronTemplate> templateClass) {
+		return registerTemplate(GroupStateManager.defaultGroupRef().name(), templateName, templateClass);
+	}
+	
+	public static ITemplateManagement registerTemplate(String groupName, String templateName, Class<? extends INeuronTemplate> templateClass) {
 		m_rwLock.writeLock().lock();
 		try {
-			final Management mgt = new Management(templateName, templateClass);
+			final Management mgt = new Management(groupName, templateName, templateClass);
 			final Management existing = m_templatesByName.addOrFetch(templateName, mgt);
 			if (existing != null) {
 				// This means we fetched the existing one, the optimistically created class is now gone
@@ -84,6 +91,7 @@ public final class TemplateStateManager {
 	
 	private static final class Management implements ITemplateManagement {
 		private final LinkedList<InstanceManagement> m_oldGen = new LinkedList<>();
+		private final String m_groupName;
 		private final int m_id;
 		private final String m_name;
 		private final Class<? extends INeuronTemplate> m_templateClass;
@@ -91,7 +99,8 @@ public final class TemplateStateManager {
 		
 		private InstanceManagement m_current;
 		
-		Management(String templateName, Class<? extends INeuronTemplate> templateClass) {
+		Management(String groupName, String templateName, Class<? extends INeuronTemplate> templateClass) {
+			m_groupName = groupName;
 			m_id = m_nextTemplateId.incrementAndGet();
 			m_name = templateName;
 			m_templateClass = templateClass;
@@ -100,32 +109,41 @@ public final class TemplateStateManager {
 			} catch (Exception ex) {
 				throw new IllegalArgumentException("The template " + templateName + " with the class " + m_templateClass.getCanonicalName() + " does not have a constructor which takes only a TemplateRef", ex);
 			}
-			m_current = new InstanceManagement(m_nextTemplateGen.incrementAndGet());
+			m_current = new InstanceManagement(GroupStateManager.manage(groupName).currentRef(), m_nextTemplateGen.incrementAndGet());
 			m_current.initOffline();
 		}
 		
 		@Override
 		public boolean bringOnline() {
 			// This could be called by anybody anywhere
-			synchronized(this) {
-				if (m_current != null) {
-					try(final ITemplateStateLock lock = m_current.lockState()) {
-						if (lock.currentState().ordinal() <= TemplateState.Online.ordinal()) {
-							return true;
-						}
-						if (lock.currentState() != TemplateState.Offline) {
-							return false;
-						}
-					}
-					m_oldGen.add(m_current);
+			final GroupRef currentGroupRef = GroupStateManager.manage(m_groupName).currentRef();
+			try(final IGroupStateLock groupLock = currentGroupRef.lockState()) {
+				if (groupLock.currentState() != GroupState.Online) {
+					return false;
 				}
-				// This is the only place that m_current is ever modified
-				m_current = new InstanceManagement(m_nextTemplateGen.incrementAndGet());
+				
+				synchronized(this) {
+					if (m_current != null) {
+						try(final ITemplateStateLock lock = m_current.lockState()) {
+							if (lock.currentState().ordinal() <= TemplateState.Online.ordinal()) {
+								return true;
+							}
+							if (lock.currentState() != TemplateState.Offline) {
+								return false;
+							}
+						}
+						m_oldGen.add(m_current);
+					}
+					// This is the only place that m_current is ever modified
+					m_current = new InstanceManagement(currentGroupRef, m_nextTemplateGen.incrementAndGet());
+				}
+				((IGroupStateLockInternal)groupLock).registerTemplate(m_current);
+
+				// At this point it is safe to use it outside the lock
+				// It currently is in the state of NA and there is no way to change that except
+				// by the thread there is here.
+				m_current.setState(TemplateState.BeingCreated);
 			}
-			// At this point it is safe to use it outside the lock
-			// It currently is in the state of NA and there is no way to change that except
-			// by the thread there is here.
-			m_current.setState(TemplateState.BeingCreated);
 
 			return true;
 		}
@@ -143,13 +161,14 @@ public final class TemplateStateManager {
 			private INeuronTemplate m_template;
 			private TemplateState m_state = TemplateState.NA;
 			private int m_stateLockCount;
+			private IGroupStateListenerRemoval m_groupOfflineTrigger;
 			
 			private IntTrie<StateLock> m_lockTracking = new IntTrie<>();
 			private int m_nextLockTrackingId = 1;
 			private TemplateState m_pendingState = null;
 			
-			private InstanceManagement(int gen) {
-				super(m_id, m_name, gen);
+			private InstanceManagement(GroupRef groupRef, int gen) {
+				super(groupRef, m_id, m_name, gen);
 				m_myEventLoop = NeuronApplication.getTaskPool().next();
 				for(TemplateState s : TemplateState.values()) {
 					m_stateMgt[s.ordinal()] = new StateManagement(s);
@@ -183,6 +202,12 @@ public final class TemplateStateManager {
 				// TakeNeuronsOffline -> SystemOffline -> Offline
 				getStateManager(TemplateState.TakeNeuronsOffline).setPostListener((isSuccessful) -> {
 					if (isSuccessful) {
+						synchronized(InstanceManagement.this) {
+							if (m_groupOfflineTrigger != null) {
+								m_groupOfflineTrigger.remove();
+								m_groupOfflineTrigger = null;
+							}
+						}
 						try(ITemplateStateLock templateLock = lockState()) {
 							final int neuronsLeft;
 							synchronized(m_activeNeuronsByGen) {
@@ -212,15 +237,43 @@ public final class TemplateStateManager {
 			}
 
 			private void onBeingCreated() {
-				NeuronSystemTLS.add(this);
-				try {
-					m_template = m_constructor.newInstance((TemplateRef)this) ;
-				} catch (Exception ex) {
-					NeuronApplication.logError(LOG, "Failed creating an instance of neuron template class {}", m_templateClass.getCanonicalName(), ex);
-					abortToOffline(ex, false);
-					return;
-				} finally {
-					NeuronSystemTLS.remove();
+				try(final IGroupStateLock lock = groupRef().lockState()) {
+					NeuronSystemTLS.add(this);
+					try {
+						if (lock.currentState() != GroupState.Online) {
+							final GroupNotOnlineException ex = new GroupNotOnlineException(groupRef());
+							NeuronApplication.logError(LOG, "Failed creating an instance of neuron. Template {} is in the {} state", m_groupName, lock.currentState(), ex);
+							abortToOffline(ex, false);
+							return;
+						}
+						m_template = m_constructor.newInstance((TemplateRef)this) ;
+						
+						synchronized(InstanceManagement.this) {
+							// When the template enters the state TakeTemplatesOffline
+							m_groupOfflineTrigger = lock.addStateListener(GroupState.TakeTemplatesOffline, (isSuccess) -> {
+								if (isSuccess) {
+									try(ITemplateStateLock templateLock = InstanceManagement.this.lockState()) {
+										// If we are Online or headed that way
+										if (templateLock.currentState().ordinal() <= NeuronState.Online.ordinal() ) {
+											// Add a listener to ourselves that triggers when we go Online
+											// (or triggers now if we are already in that state)
+											templateLock.addStateListener(TemplateState.Online, (isSuccess2) -> {
+												if (isSuccess2) {
+													setState(TemplateState.TakeNeuronsOffline);
+												}
+											});
+										}
+									}
+								}
+							});
+						}
+					} catch(Exception ex) {
+						NeuronApplication.logError(LOG, "Failed creating an instance of neuron template class {}", m_templateClass.getCanonicalName(), ex);
+						abortToOffline(ex, false);
+						return;
+					} finally {
+						NeuronSystemTLS.remove();
+					}
 				}
 				setState(TemplateState.Initializing);
 			}
@@ -525,6 +578,7 @@ public final class TemplateStateManager {
 				private final Thread m_lockingThread;
 				private boolean m_locked = true;
 				private int m_lockTrackingId;
+				@SuppressWarnings("unused")
 				private StackTraceElement[] m_lockStackTrace;
 				
 				StateLock() {
@@ -532,7 +586,7 @@ public final class TemplateStateManager {
 				}
 				
 				@Override
-				public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config) {
+				public void registerNeuron(NeuronRef ref) {
 					synchronized(m_activeNeuronsByGen) {
 						if (m_activeNeuronsByGen.addOrFetch(ref.generation(), ref) != null) {
 							LOG.fatal("Added a neuron reference which already existed.  This should never happen.", new RuntimeException("Just for the stack trace"));
@@ -558,12 +612,20 @@ public final class TemplateStateManager {
 //								}
 							}
 							if (neuronsLeft == 0) {
-								setState(TemplateState.SystemOffline);
+								try(ITemplateStateLock templateLock = InstanceManagement.this.lockState()) {
+									if (templateLock.currentState() == TemplateState.TakeNeuronsOffline) {
+										setState(TemplateState.SystemOffline);
+									}
+								}
 //							} else {
 //								LOG.error("(2)There are {} neurons still online", neuronsLeft);
 							}
 						});
 					}
+				}
+
+				@Override
+				public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config) {
 					// Exceptions are handled by NeuronStateManager
 					INeuronInitialization neuron = m_template.createNeuron(ref, config);
 					return neuron;

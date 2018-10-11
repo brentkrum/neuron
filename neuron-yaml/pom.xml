@@ -9,9 +9,9 @@
 		<version>1.0.0</version>
 		<relativePath>../neuron-parent</relativePath>
 	</parent>
-	<artifactId>neuron-javascript</artifactId>
-	<name>Neuron Framework JavaScript Neuron</name>
-	<description>Neuron Framework JavaScript Neuron</description>
+	<artifactId>neuron-yaml</artifactId>
+	<name>Neuron Framework Yaml Parser</name>
+	<description>Neuron Framework Yaml Parser</description>
 
 	<properties>
 		<main.basedir>${basedir}/..</main.basedir>
@@ -23,12 +23,8 @@
 			<artifactId>neuron-core</artifactId>
 		</dependency>
 		<dependency>
-			<groupId>com.neuron</groupId>
-			<artifactId>neuron-yaml</artifactId>
-		</dependency>
-		<dependency>
-			<groupId>org.mozilla</groupId>
-			<artifactId>rhino</artifactId>
+			<groupId>com.fasterxml.jackson.dataformat</groupId>
+			<artifactId>jackson-dataformat-yaml</artifactId>
 		</dependency>
 	</dependencies>
 
