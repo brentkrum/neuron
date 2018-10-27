@@ -4,6 +4,9 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neuron.utility.FastLinkedList;
 import com.neuron.utility.FastLinkedList.LLNode;
+
+import io.netty.util.AbstractReferenceCounted;
+
 import com.neuron.utility.FastLinkedMap;
 
 public abstract class SerializerBase {
@@ -26,9 +29,15 @@ public abstract class SerializerBase {
 		private volatile boolean m_inList;
 		
 	}
+	
+	abstract class AbstractReferenceCountedMixin {
+		@JsonIgnore
+	    private volatile int refCnt;
+	}
 
 	public static void addMixins(ObjectMapper mapper) {
 		mapper.addMixIn(FastLinkedList.LLNode.class, LLNodeMixin.class);
 		mapper.addMixIn(FastLinkedMap.LLMapNode.class, LLMapNodeMixin.class);
+		mapper.addMixIn(AbstractReferenceCounted.class, AbstractReferenceCountedMixin.class);
 	}
 }

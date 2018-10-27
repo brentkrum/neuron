@@ -416,17 +416,29 @@ public final class MessagePipeSystem
 				return;
 			}
 			m_writer = writer;
-			if (m_count == 0) {
-				if (LOG.isTraceEnabled()) {
-					LOG.trace("Pipe {} sending PipeEmpty event to writer", m_pipeName);
-				}
-				m_writer.onEvent(IMessagePipeWriter.Event.PipeEmpty);
-			} else if (!m_full) {
-				if (LOG.isTraceEnabled()) {
-					LOG.trace("Pipe {} sending PipeWriteable event to writer", m_pipeName);
-				}
-				m_writer.onEvent(IMessagePipeWriter.Event.PipeWriteable);
+			try(INeuronStateLock lock = m_writer.owner().lockState()) {
+				lock.addStateListener(NeuronState.SystemOnline, (ignoreParam) -> {
+					IMessagePipeWriter.Event eventToSend = null;
+					
+					synchronized(CreatedPipeBroker.this) {
+						if (writer != m_writer) {
+							return;
+						}
+						if (m_count == 0) {
+							eventToSend = IMessagePipeWriter.Event.PipeEmpty;
+						} else if (!m_full) {
+							eventToSend = IMessagePipeWriter.Event.PipeWriteable;
+						}
+					}
+					if (eventToSend != null) {
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Pipe {} sending {} event to writer", m_pipeName, eventToSend);
+						}
+						m_writer.onEvent(eventToSend);
+					}					
+				});
 			}
+			
 		}
 		
 		synchronized void closeReader() {

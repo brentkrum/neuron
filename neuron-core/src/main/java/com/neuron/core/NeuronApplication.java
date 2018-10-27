@@ -15,6 +15,7 @@ import com.neuron.core.NeuronStateManager.NeuronState;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
 import com.neuron.core.TemplateStateManager.TemplateState;
 import com.neuron.core.log4j.Log4jConsoleLogger;
+import com.neuron.utility.FastLinkedListInit;
 import com.neuron.utility.StackTraceUtil;
 
 import io.netty.buffer.ByteBuf;
@@ -24,6 +25,7 @@ import io.netty.channel.DefaultEventLoopGroup;
 import io.netty.channel.MultithreadEventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.Promise;
 import io.netty.util.concurrent.ScheduledFuture;
 import io.netty.util.internal.PlatformDependent;
 
@@ -52,6 +54,7 @@ public final class NeuronApplication {
 		} else {
 			m_taskPool = new DefaultEventLoopGroup(taskPoolSize);
 		}
+		FastLinkedListInit.init(m_taskPool);
 	}
 	
 	static void register(INeuronApplicationSystem registrant) {
@@ -73,6 +76,8 @@ public final class NeuronApplication {
 		NamedValueSystem.register();
 		BytePipeSystem.register();
 		MessagePipeSystem.register();
+		MessageQueueSystem.register();
+		AddressableDuplexBusSystem.register();
 	}
 
 	public static void fatalExit() {
@@ -112,6 +117,10 @@ public final class NeuronApplication {
 	
 	public static MultithreadEventLoopGroup getTaskPool() {
 		return m_taskPool;
+	}
+	
+	public static <T> Promise<T> newPromise() {
+		return m_taskPool.next().<T>newPromise();
 	}
 	
    public static ScheduledFuture<?> scheduleForCurrentTemplate(Runnable command, long delay, TimeUnit unit) {
@@ -334,7 +343,8 @@ public final class NeuronApplication {
 		}
 
 		LOG.info("Start of shutdown hook");
-		
+		// TODO SHUT DOWN NEURONS/TEMPLATES!!
+		// TODO How do we shut down Neurons!?!? <<<<------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 		final int numAppSystems = m_appSystems.size();
 		for(int i=numAppSystems-1; i>=0; i--) {
 			final NeuronApplicationSystemRegistrant r = m_appSystems.get(i);

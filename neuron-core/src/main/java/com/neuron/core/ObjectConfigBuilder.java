@@ -7,6 +7,12 @@ import com.neuron.core.serializer.json.JSONSerializer;
 
 public final class ObjectConfigBuilder
 {
+	private static final ObjectConfig EMPTY_CONFIG = ObjectConfigBuilder.config().build();
+	
+	public static ObjectConfig emptyConfig() {
+		return EMPTY_CONFIG;
+	}
+	
 	public static ObjectConfigObjectBuilder config() {
 		return new ObjectConfig();
 	}
@@ -46,6 +52,10 @@ public final class ObjectConfigBuilder
 			m_obj.put(key, value);
 			return this;
 		}
+		public ObjectConfigObjectBuilder option(String key, boolean value) {
+			m_obj.put(key, value);
+			return this;
+		}
 		public ObjectConfigObjectBuilder option(String key, int value) {
 			m_obj.put(key, value);
 			return this;
@@ -80,6 +90,22 @@ public final class ObjectConfigBuilder
 				return false;
 			}
 			return true;
+		}
+		
+		public Boolean getBoolean(String key, Boolean defaultValue) {
+			final JsonNode n = m_obj.get(key);
+			if (n == null || n.isNull()) {
+				return defaultValue;
+			}
+			return n.asBoolean(defaultValue);
+		}
+		
+		public boolean getBoolean(String key) {
+			final JsonNode n = m_obj.get(key);
+			if (n == null || n.isNull()) {
+				return false;
+			}
+			return n.asBoolean();
 		}
 		
 		public Integer getInteger(String key, Integer defaultValue) {

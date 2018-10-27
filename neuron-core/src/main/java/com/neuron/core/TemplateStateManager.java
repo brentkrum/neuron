@@ -85,6 +85,7 @@ public final class TemplateStateManager {
 	}
 
 	public interface ITemplateManagement {
+		String name();
 		boolean bringOnline();
 		TemplateRef currentRef();
 	}
@@ -113,6 +114,11 @@ public final class TemplateStateManager {
 			m_current.initOffline();
 		}
 		
+		@Override
+		public String name() {
+			return m_name;
+		}
+
 		@Override
 		public boolean bringOnline() {
 			// This could be called by anybody anywhere
@@ -208,23 +214,15 @@ public final class TemplateStateManager {
 								m_groupOfflineTrigger = null;
 							}
 						}
-						try(ITemplateStateLock templateLock = lockState()) {
-							final int neuronsLeft;
-							synchronized(m_activeNeuronsByGen) {
-								neuronsLeft = m_activeNeuronsByGen.count();
-//								if (neuronsLeft > 0) {
-//									m_activeNeuronsByGen.forEach((key, value) -> {
-//										try(INeuronStateLock nlock = value.lockState()) {
-//											LOG.error("Neuron {} is in state {} and still attached", value.logString(), nlock.currentState());
-//										}
-//										return true;
-//									});
-//								}
-							}
-							if (neuronsLeft == 0) {
-								setState(TemplateState.SystemOffline);
-//							} else {
-//								LOG.error("There are {} neurons still online", neuronsLeft);
+						final int neuronsLeft;
+						synchronized(m_activeNeuronsByGen) {
+							neuronsLeft = m_activeNeuronsByGen.count();
+						}
+						if (neuronsLeft == 0) {
+							try(ITemplateStateLock templateLock = lockState()) {
+								if (templateLock.currentState() == TemplateState.TakeNeuronsOffline) {
+									setState(TemplateState.SystemOffline);
+								}
 							}
 						}
 					}
@@ -500,8 +498,15 @@ public final class TemplateStateManager {
 						if (m_systemPostListener != null) {
 							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 							aggregatePromise.addListener((f) -> {
-								// Once all listener calls are done, we can let the system process
-								m_systemPostListener.onStateReached(successful);
+								NeuronSystemTLS.add(InstanceManagement.this);
+								try {
+									// Once all listener calls are done, we can let the system process
+									m_systemPostListener.onStateReached(successful);
+								} catch(Exception ex) {
+									LOG.error("Exception calling post state listener", ex);
+								} finally {
+									NeuronSystemTLS.remove();
+								}
 							});
 							tsp.finish(aggregatePromise);
 						}

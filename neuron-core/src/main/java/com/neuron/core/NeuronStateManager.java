@@ -565,8 +565,15 @@ public final class NeuronStateManager {
 						if (m_systemPostListener != null) {
 							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 							aggregatePromise.addListener((f) -> {
-								// Once all listener calls are done, we can let the system process
-								m_systemPostListener.onStateReached(successful);
+								NeuronSystemTLS.add(InstanceManagement.this);
+								try {
+									// Once all listener calls are done, we can let the system process
+									m_systemPostListener.onStateReached(successful);
+								} catch(Exception ex) {
+									LOG.error("Exception calling post state listener", ex);
+								} finally {
+									NeuronSystemTLS.remove();
+								}
 							});
 							tsp.finish(aggregatePromise);
 						}

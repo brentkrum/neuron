@@ -10,8 +10,8 @@ public final class FastLinkedList<T> {
 
 	private final int m_maxCount; 
 	private volatile int m_count;
-	private LLNode<T> m_head; // Normal: Add to head
-	private LLNode<T> m_tail; // Normal: Remove from tail
+	private LLNode<T> m_head; // Normal: Add to head (also referred to as "Last")
+	private LLNode<T> m_tail; // Normal: Remove from tail (also referred to as "First")
 	private List<Runnable> m_zeroEntriesCallbacks;
 	
 	public FastLinkedList() {

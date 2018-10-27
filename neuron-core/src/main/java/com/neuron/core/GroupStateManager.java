@@ -156,23 +156,15 @@ public final class GroupStateManager {
 				// TakeTemplatesOffline, SystemOffline, Offline
 				getStateManager(GroupState.TakeTemplatesOffline).setPostListener((isSuccessful) -> {
 					if (isSuccessful) {
-						try(IGroupStateLock GroupLock = lockState()) {
-							final int neuronsLeft;
-							synchronized(m_activeTemplatesByGen) {
-								neuronsLeft = m_activeTemplatesByGen.count();
-//								if (neuronsLeft > 0) {
-//									m_activeNeuronsByGen.forEach((key, value) -> {
-//										try(INeuronStateLock nlock = value.lockState()) {
-//											LOG.error("Neuron {} is in state {} and still attached", value.logString(), nlock.currentState());
-//										}
-//										return true;
-//									});
-//								}
-							}
-							if (neuronsLeft == 0) {
-								setState(GroupState.SystemOffline);
-//							} else {
-//								LOG.error("There are {} neurons still online", neuronsLeft);
+						final int neuronsLeft;
+						synchronized(m_activeTemplatesByGen) {
+							neuronsLeft = m_activeTemplatesByGen.count();
+						}
+						if (neuronsLeft == 0) {
+							try(IGroupStateLock groupLock = lockState()) {
+								if (groupLock.currentState() == GroupState.TakeTemplatesOffline) {
+									setState(GroupState.SystemOffline);
+								}
 							}
 						}
 					}

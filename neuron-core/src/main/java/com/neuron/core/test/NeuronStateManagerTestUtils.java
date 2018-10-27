@@ -7,13 +7,40 @@ import com.neuron.core.NeuronApplication;
 import com.neuron.core.NeuronLogEntry;
 import com.neuron.core.NeuronRef;
 import com.neuron.core.NeuronRef.INeuronStateLock;
+import com.neuron.core.NeuronStateManager;
+import com.neuron.core.NeuronStateManager.INeuronManagement;
 import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
+import com.neuron.core.TemplateStateManager.ITemplateManagement;
 
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 
 public final class NeuronStateManagerTestUtils {
 	private static final DateFormat m_dtFormatter = SimpleDateFormat.getDateTimeInstance(SimpleDateFormat.SHORT,SimpleDateFormat.SHORT);
+
+	public static Future<Void> bringOnline(ITemplateManagement tMgt, String neuronName, ObjectConfig config) {
+		return bringOnline(tMgt.name(), neuronName, config);
+	}
+	
+	public static Future<Void> bringOnline(String templateName, String neuronName, ObjectConfig config) {
+		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
+		final INeuronManagement mgt = NeuronStateManager.registerNeuron(templateName, neuronName);
+		if (!mgt.bringOnline(config)) {
+			reachedState.setFailure(new RuntimeException("bringOnline() returned false"));
+			return reachedState;
+		}
+		try(INeuronStateLock lock = mgt.currentRef().lockState()) {
+			lock.addStateListener(NeuronState.Online, (successful) -> {
+				if (successful) {
+					reachedState.setSuccess((Void)null);
+				} else {
+					reachedState.setFailure(new RuntimeException("State is in failure condition"));
+				}
+			});
+		}
+		return reachedState;
+	}
 	
 	public static Future<Void> createFutureForState(NeuronRef ref, NeuronState state) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
@@ -29,6 +56,10 @@ public final class NeuronStateManagerTestUtils {
 		return reachedState;
 	}
 
+	public static Future<Void> takeNeuronOffline(String name) {
+		return takeNeuronOffline(NeuronStateManager.manage(name).currentRef());
+	}
+	
 	public static Future<Void> takeNeuronOffline(NeuronRef ref) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
 		try(INeuronStateLock lock = ref.lockState()) {
@@ -46,8 +77,14 @@ public final class NeuronStateManagerTestUtils {
 		return reachedState;
 	}
 
+	public static boolean logContains(String neuronName, String testString) {
+		return logContains(neuronName, testString, false);
+	}
 	public static boolean logContains(NeuronRef ref, String testString) {
 		return logContains(ref, testString, false);
+	}
+	public static boolean logContains(String neuronName, String testString, boolean printLog) {
+		return logContains(NeuronStateManager.manage(neuronName).currentRef(), testString, printLog);
 	}
 	public static boolean logContains(NeuronRef ref, String testString, boolean printLog) {
 		final StringBuilder sb = printLog ? new StringBuilder() : null;
