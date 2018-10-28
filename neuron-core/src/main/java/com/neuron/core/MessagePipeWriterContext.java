@@ -7,7 +7,7 @@ import com.neuron.core.MessagePipeSystem.IMessagePipeWriter;
 import com.neuron.core.MessagePipeSystem.IPipeWriterContext;
 import com.neuron.core.MessagePipeSystem.PipeBroker;
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 
 import io.netty.util.ReferenceCounted;

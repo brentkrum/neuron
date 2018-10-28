@@ -4,7 +4,7 @@ import java.util.List;
 
 import org.apache.logging.log4j.Level;
 
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 
 import io.netty.util.concurrent.Promise;
 

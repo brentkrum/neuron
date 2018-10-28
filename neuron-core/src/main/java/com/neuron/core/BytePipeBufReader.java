@@ -6,7 +6,7 @@ import org.apache.logging.log4j.Logger;
 import com.neuron.core.BytePipeSystem.PipeBroker;
 import com.neuron.core.BytePipeSystem.ReadPipeType;
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 
 import io.netty.buffer.ByteBuf;

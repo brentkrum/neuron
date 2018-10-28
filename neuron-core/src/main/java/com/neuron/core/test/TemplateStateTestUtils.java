@@ -7,19 +7,19 @@ import com.neuron.core.INeuronTemplate;
 import com.neuron.core.NeuronApplication;
 import com.neuron.core.NeuronLogEntry;
 import com.neuron.core.TemplateRef;
-import com.neuron.core.TemplateStateManager;
+import com.neuron.core.TemplateStateSystem;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.ITemplateManagement;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 
-public final class TemplateStateManagerTestUtils {
+public final class TemplateStateTestUtils {
 	private static final DateFormat m_dtFormatter = SimpleDateFormat.getDateTimeInstance(SimpleDateFormat.SHORT,SimpleDateFormat.SHORT);
 	
 	public static Future<Void> createFutureForState(String templateName, TemplateState state) {
-		return createFutureForState(TemplateStateManager.manage(templateName).currentRef(), state);
+		return createFutureForState(TemplateStateSystem.manage(templateName).currentRef(), state);
 	}
 	
 	public static Future<Void> createFutureForState(TemplateRef ref, TemplateState state) {
@@ -37,7 +37,7 @@ public final class TemplateStateManagerTestUtils {
 	}
 
 	public static Future<Void> registerAndBringOnline(String templateName, Class<? extends INeuronTemplate> templateClass) {
-		final ITemplateManagement mgt = TemplateStateManager.registerTemplate(templateName, templateClass);
+		final ITemplateManagement mgt = TemplateStateSystem.registerTemplate(templateName, templateClass);
 		return bringTemplateOnline(mgt);
 	}
 	
@@ -61,7 +61,7 @@ public final class TemplateStateManagerTestUtils {
 
 	public static Future<Void> bringTemplateOnline(String templateName) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
-		final ITemplateManagement mgt = TemplateStateManager.manage(templateName);
+		final ITemplateManagement mgt = TemplateStateSystem.manage(templateName);
 		if (!mgt.bringOnline()) {
 			reachedState.setFailure(new RuntimeException("bringOnline() returned false"));
 			return reachedState;
@@ -84,7 +84,7 @@ public final class TemplateStateManagerTestUtils {
 	
 	public static Future<Void> takeTemplateOffline(String templateName) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
-		try(ITemplateStateLock lock = TemplateStateManager.manage(templateName).currentRef().lockState()) {
+		try(ITemplateStateLock lock = TemplateStateSystem.manage(templateName).currentRef().lockState()) {
 			if(!lock.takeOffline()) {
 				return NeuronApplication.getTaskPool().next().newFailedFuture(new RuntimeException("Call to lock.takeOffline() returned false"));
 			}

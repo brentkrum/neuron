@@ -10,7 +10,7 @@ import org.apache.logging.log4j.Logger;
 
 import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 import com.neuron.core.GroupRef.IGroupStateLock;
 import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
@@ -18,20 +18,24 @@ import com.neuron.utility.FastLinkedList;
 import com.neuron.utility.IntTrie;
 
 import io.netty.channel.EventLoop;
+import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 
-public final class GroupStateManager {
+public final class GroupStateSystem {
 	public enum GroupState { NA, SystemOnline, Online, TakeTemplatesOffline, SystemOffline, Offline };
 
 	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.GroupStateManager.lockLeakDetection", false);
 	
-	private static final Logger LOG = LogManager.getLogger(GroupStateManager.class);
+	private static final Logger LOG = LogManager.getLogger(GroupStateSystem.class);
 
 	private static final ReadWriteLock m_rwLock = new ReentrantReadWriteLock();
 	private static final IntTrie<Management> m_groupsById = new IntTrie<>();
 	private static final CharSequenceTrie<Management> m_groupsByName = new CharSequenceTrie<>();
 	private static final AtomicInteger m_nextGroupId = new AtomicInteger(1);
 	private static final AtomicInteger m_nextGroupGen = new AtomicInteger(1);
+	private static final AtomicInteger m_numNotOffline = new AtomicInteger(0);
+	private static boolean m_shuttingDown;
+	private static Promise<Void> m_shutdownAllOffline;
 	
 	public static final String DEFAULT_GROUP_NAME = "DEFAULT";
 
@@ -49,13 +53,17 @@ public final class GroupStateManager {
 	public static IGroupManagement registerGroup(String groupName) {
 		m_rwLock.writeLock().lock();
 		try {
-			final Management mgt = new Management(groupName);
-			final Management existing = m_groupsByName.addOrFetch(groupName, mgt);
+			final Management existing = m_groupsByName.get(groupName);
 			if (existing != null) {
 				throw new IllegalArgumentException("The group " + groupName + " already exists");
-			} else {
-				m_groupsById.addOrFetch(mgt.m_id, mgt);
 			}
+			if (m_shuttingDown) {
+				// Return a fake stub management which denies most everything
+				return new ShutdownManagement(groupName);
+			}
+			final Management mgt = new Management(groupName);
+			m_groupsByName.addOrFetch(groupName, mgt);
+			m_groupsById.addOrFetch(mgt.m_id, mgt);
 			return mgt;
 		} finally {
 			m_rwLock.writeLock().unlock();
@@ -80,6 +88,17 @@ public final class GroupStateManager {
 		GroupRef currentRef();
 	}
 	
+	private static void incrementNotOfflineCount() {
+		m_numNotOffline.incrementAndGet();
+	}
+	private static void decrementNotOfflineCount() {
+		if (m_numNotOffline.decrementAndGet() == 0) {
+			if (m_shutdownAllOffline != null) {
+				m_shutdownAllOffline.setSuccess((Void)null);
+			}
+		}
+	}
+	
 	private static final class Management implements IGroupManagement {
 		private final LinkedList<InstanceManagement> m_oldGen = new LinkedList<>();
 		private final int m_id;
@@ -94,32 +113,69 @@ public final class GroupStateManager {
 			m_current.initOffline();
 		}
 		
+		void takeCurrentOffline() {
+			synchronized(this) {
+				final InstanceManagement c = m_current;
+				try(final IGroupStateLock lock = c.lockState()) {
+					if (lock.currentState() == GroupState.Online) {
+						c.setState(GroupState.TakeTemplatesOffline);
+					} 
+					// If headed towards Online
+					else if (lock.currentState().ordinal() <= GroupState.Online.ordinal()) {
+						// Add listener to auto-shutdown
+						lock.addStateListener(GroupState.Online, (isSuccessful) -> {
+							if (isSuccessful) {
+								c.setState(GroupState.TakeTemplatesOffline);
+							}
+						});
+					}
+				}
+			}
+		}
+		
+		// This could be called by anybody anywhere
 		@Override
 		public boolean bringOnline() {
-			// This could be called by anybody anywhere
-			synchronized(this) {
-				if (m_current != null) {
-					try(final IGroupStateLock lock = m_current.lockState()) {
-						if (lock.currentState().ordinal() <= GroupState.Online.ordinal()) {
-							return true;
-						}
-						if (lock.currentState() != GroupState.Offline) {
-							return false;
-						}
-					}
-					m_oldGen.add(m_current);
+			m_rwLock.readLock().lock();
+			try {
+				if (m_shuttingDown) {
+					return false;
 				}
-				// This is the only place that m_current is ever modified
-				m_current = new InstanceManagement(m_nextGroupGen.incrementAndGet());
+				incrementNotOfflineCount();
+			} finally {
+				m_rwLock.readLock().unlock();
 			}
-			// At this point it is safe to use it outside the lock
-			// It currently is in the state of NA and there is no way to change that except
-			// by the thread there is here.
-			m_current.setState(GroupState.SystemOnline);
+			try {
+				synchronized(this) {
+					if (m_current != null) {
+						try(final IGroupStateLock lock = m_current.lockState()) {
+							if (lock.currentState().ordinal() <= GroupState.Online.ordinal()) {
+								return true;
+							}
+							if (lock.currentState() != GroupState.Offline) {
+								return false;
+							}
+						}
+						m_oldGen.add(m_current);
+					}
+					// This is the only place that m_current is ever modified
+					m_current = new InstanceManagement(m_nextGroupGen.incrementAndGet());
+				}
+				// This is the increment that is owned by the m_current instance and will be decremented when it goes offline 
+				incrementNotOfflineCount();
+				
+				// At this point it is safe to use it outside the lock
+				// It currently is in the state of NA and there is no way to change that except
+				// by the thread there is here.
+				m_current.setState(GroupState.SystemOnline);
+			} finally {
+				decrementNotOfflineCount();
+			}
 
 			return true;
 		}
 		
+			// This could be called by anybody anywhere
 		@Override
 		public GroupRef currentRef() {
 			return m_current;
@@ -174,9 +230,13 @@ public final class GroupStateManager {
 						setState(GroupState.Offline);
 					}
 				});
+				getStateManager(GroupState.Offline).setPostListener((isSuccessful) -> {
+					decrementNotOfflineCount();
+				});
 			}
 			
 			private void initOffline() {
+				incrementNotOfflineCount();
 				final int start;
 				synchronized(this) {
 					start = Integer.max(1, m_state.ordinal());
@@ -489,5 +549,92 @@ public final class GroupStateManager {
 				
 			}
 		}
+	}
+	
+	private static final class ShutdownManagement extends GroupRef implements IGroupManagement, IGroupStateLock {
+		ShutdownManagement(String groupName) {
+			super(m_nextGroupId.incrementAndGet(), groupName, m_nextGroupGen.incrementAndGet());
+		}
+
+		@Override
+		public boolean bringOnline() {
+			// We are in shutdown, can't bring anything online
+			return false;
+		}
+
+		@Override
+		public GroupRef currentRef() {
+			return this;
+		}
+
+		@Override
+		public IGroupStateLock lockState() {
+			return this;
+		}
+
+		@Override
+		public void registerTemplate(TemplateRef ref) {
+			throw new SystemShutdownException();
+		}
+
+		@Override
+		public IGroupStateListenerRemoval addStateListener(GroupState state, IGroupStateSyncListener listener) {
+			throw new SystemShutdownException();
+		}
+
+		@Override
+		public IGroupStateListenerRemoval addStateAsyncListener(GroupState state, IGroupStateAsyncListener listener) {
+			throw new SystemShutdownException();
+		}
+
+		@Override
+		public GroupState currentState() {
+			return GroupState.Offline;
+		}
+
+		@Override
+		public boolean takeOffline() {
+			return true;
+		}
+
+		@Override
+		public void unlock() {
+		}
+
+		@Override
+		public void close() {
+		}
+	}
+	
+	static void register() {
+		NeuronApplication.register(new Registrant());
+	}
+	private static class Registrant implements INeuronApplicationSystem {
+
+		@Override
+		public String systemName()
+		{
+			return "GroupStateSystem";
+		}
+
+		@Override
+		public Future<Void> startShutdown() {
+			m_rwLock.writeLock().lock();
+			try {
+				m_shuttingDown = true;
+				if (m_numNotOffline.get() == 0) {
+					return INeuronApplicationSystem.super.startShutdown();
+				}
+				m_shutdownAllOffline = NeuronApplication.newPromise();
+				m_groupsByName.forEach((key, value) -> {
+					value.takeCurrentOffline();
+					return true;
+				});
+			} finally {
+				m_rwLock.writeLock().unlock();
+			}
+			return m_shutdownAllOffline;
+		}
+		
 	}
 }

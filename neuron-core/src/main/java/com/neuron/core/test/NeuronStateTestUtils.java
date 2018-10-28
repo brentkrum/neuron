@@ -7,16 +7,16 @@ import com.neuron.core.NeuronApplication;
 import com.neuron.core.NeuronLogEntry;
 import com.neuron.core.NeuronRef;
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager;
-import com.neuron.core.NeuronStateManager.INeuronManagement;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem;
+import com.neuron.core.NeuronStateSystem.INeuronManagement;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
+import com.neuron.core.TemplateStateSystem.ITemplateManagement;
 
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 
-public final class NeuronStateManagerTestUtils {
+public final class NeuronStateTestUtils {
 	private static final DateFormat m_dtFormatter = SimpleDateFormat.getDateTimeInstance(SimpleDateFormat.SHORT,SimpleDateFormat.SHORT);
 
 	public static Future<Void> bringOnline(ITemplateManagement tMgt, String neuronName, ObjectConfig config) {
@@ -25,7 +25,7 @@ public final class NeuronStateManagerTestUtils {
 	
 	public static Future<Void> bringOnline(String templateName, String neuronName, ObjectConfig config) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
-		final INeuronManagement mgt = NeuronStateManager.registerNeuron(templateName, neuronName);
+		final INeuronManagement mgt = NeuronStateSystem.registerNeuron(templateName, neuronName);
 		if (!mgt.bringOnline(config)) {
 			reachedState.setFailure(new RuntimeException("bringOnline() returned false"));
 			return reachedState;
@@ -57,7 +57,7 @@ public final class NeuronStateManagerTestUtils {
 	}
 
 	public static Future<Void> takeNeuronOffline(String name) {
-		return takeNeuronOffline(NeuronStateManager.manage(name).currentRef());
+		return takeNeuronOffline(NeuronStateSystem.manage(name).currentRef());
 	}
 	
 	public static Future<Void> takeNeuronOffline(NeuronRef ref) {
@@ -84,7 +84,7 @@ public final class NeuronStateManagerTestUtils {
 		return logContains(ref, testString, false);
 	}
 	public static boolean logContains(String neuronName, String testString, boolean printLog) {
-		return logContains(NeuronStateManager.manage(neuronName).currentRef(), testString, printLog);
+		return logContains(NeuronStateSystem.manage(neuronName).currentRef(), testString, printLog);
 	}
 	public static boolean logContains(NeuronRef ref, String testString, boolean printLog) {
 		final StringBuilder sb = printLog ? new StringBuilder() : null;

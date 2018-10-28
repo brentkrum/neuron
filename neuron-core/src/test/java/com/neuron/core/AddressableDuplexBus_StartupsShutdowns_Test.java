@@ -13,8 +13,8 @@ import org.junit.jupiter.api.Test;
 
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.NeuronStateManagerTestUtils;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.NeuronStateTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 
 import io.netty.util.AbstractReferenceCounted;
 import io.netty.util.ReferenceCounted;
@@ -24,7 +24,7 @@ import io.netty.util.concurrent.Promise;
 public class AddressableDuplexBus_StartupsShutdowns_Test {
 	@BeforeAll
 	public static void init() {
-//		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
+		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
 		System.setProperty("logger.com.neuron.core.AddressableDuplexBusSystem", "DEBUG");
 //		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
 		
@@ -40,11 +40,11 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 	@Test
 	public void sameAddress() {
 		// two neurons listen on same bus address
-		TemplateStateManagerTestUtils.registerAndBringOnline("SameAddressTemplate", SameAddressTemplate.class).syncUninterruptibly();
-		Future<Void> f = NeuronStateManagerTestUtils.bringOnline("SameAddressTemplate", "sameAddress", ObjectConfigBuilder.config().build());
+		TemplateStateTestUtils.registerAndBringOnline("SameAddressTemplate", SameAddressTemplate.class).syncUninterruptibly();
+		Future<Void> f = NeuronStateTestUtils.bringOnline("SameAddressTemplate", "sameAddress", ObjectConfigBuilder.config().build());
 		Assertions.assertTrue(f.awaitUninterruptibly(500));
 		Assertions.assertFalse(f.isSuccess());
-		assertTrue(NeuronStateManagerTestUtils.logContains("sameAddress", "java.lang.UnsupportedOperationException: Attempted to add a second reader for bus 'sameAddress' address 'test'"));
+		assertTrue(NeuronStateTestUtils.logContains("sameAddress", "java.lang.UnsupportedOperationException: Attempted to add a second reader for bus 'sameAddress' address 'test'"));
 	}
 	
 	public static class SameAddressTemplate extends DefaultTestNeuronTemplateBase {
@@ -82,12 +82,12 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 	@Test
 	public void patternMatchNone() {
 		// a neuron listens on a pattern which doesn't match any addresses
-		TemplateStateManagerTestUtils.registerAndBringOnline("PatternMatchNoneTemplate", PatternMatchNoneTemplate.class).syncUninterruptibly();
-		Future<Void> f = NeuronStateManagerTestUtils.bringOnline("PatternMatchNoneTemplate", "patternMatchNone", ObjectConfigBuilder.config().build());
+		TemplateStateTestUtils.registerAndBringOnline("PatternMatchNoneTemplate", PatternMatchNoneTemplate.class).syncUninterruptibly();
+		Future<Void> f = NeuronStateTestUtils.bringOnline("PatternMatchNoneTemplate", "patternMatchNone", ObjectConfigBuilder.config().build());
 		Assertions.assertTrue(f.awaitUninterruptibly(500));
 		Assertions.assertTrue(f.isSuccess());
 		
-		TemplateStateManagerTestUtils.takeTemplateOffline("PatternMatchNoneTemplate");
+		TemplateStateTestUtils.takeTemplateOffline("PatternMatchNoneTemplate");
 	}
 	
 	public static class PatternMatchNoneTemplate extends DefaultTestNeuronTemplateBase {
@@ -126,13 +126,13 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 	public void patternMatchInUseAddress() {
 		// one neuron listens on a bus address
 		// another neuron listens on a pattern which matches this address
-		TemplateStateManagerTestUtils.registerAndBringOnline("PatternMatchInUseAddressTemplate", PatternMatchInUseAddressTemplate.class).syncUninterruptibly();
-		Future<Void> f = NeuronStateManagerTestUtils.bringOnline("PatternMatchInUseAddressTemplate", "patternMatchInUseAddress", ObjectConfigBuilder.config().build());
+		TemplateStateTestUtils.registerAndBringOnline("PatternMatchInUseAddressTemplate", PatternMatchInUseAddressTemplate.class).syncUninterruptibly();
+		Future<Void> f = NeuronStateTestUtils.bringOnline("PatternMatchInUseAddressTemplate", "patternMatchInUseAddress", ObjectConfigBuilder.config().build());
 		Assertions.assertTrue(f.awaitUninterruptibly(500));
 		Assertions.assertFalse(f.isSuccess());
-		assertTrue(NeuronStateManagerTestUtils.logContains("patternMatchInUseAddress", "java.lang.IllegalArgumentException: In bus 'BUSpatternMatchInUseAddress' the supplied address pattern matches the existing in-use address 'test'"));
+		assertTrue(NeuronStateTestUtils.logContains("patternMatchInUseAddress", "java.lang.IllegalArgumentException: In bus 'BUSpatternMatchInUseAddress' the supplied address pattern matches the existing in-use address 'test'"));
 		
-		TemplateStateManagerTestUtils.takeTemplateOffline("PatternMatchInUseAddressTemplate");
+		TemplateStateTestUtils.takeTemplateOffline("PatternMatchInUseAddressTemplate");
 	}
 	
 	public static class PatternMatchInUseAddressTemplate extends DefaultTestNeuronTemplateBase {
@@ -171,12 +171,12 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 	public void patternMatchAddress() {
 		patternMatchAddress_MessageProcessed = NeuronApplication.newPromise();
 		// submit message into a bus at an address 
-		TemplateStateManagerTestUtils.registerAndBringOnline("PatternMatchAddressTemplateA", PatternMatchAddressTemplateA.class).syncUninterruptibly();
-		Assertions.assertTrue(NeuronStateManagerTestUtils.bringOnline("PatternMatchAddressTemplateA", "patternMatchAddressA", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
+		TemplateStateTestUtils.registerAndBringOnline("PatternMatchAddressTemplateA", PatternMatchAddressTemplateA.class).syncUninterruptibly();
+		Assertions.assertTrue(NeuronStateTestUtils.bringOnline("PatternMatchAddressTemplateA", "patternMatchAddressA", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
 		
 		// another neuron listens on a pattern which matches this address
-		TemplateStateManagerTestUtils.registerAndBringOnline("PatternMatchAddressTemplateB", PatternMatchAddressTemplateB.class).syncUninterruptibly();
-		Assertions.assertTrue(NeuronStateManagerTestUtils.bringOnline("PatternMatchAddressTemplateB", "patternMatchAddressB", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
+		TemplateStateTestUtils.registerAndBringOnline("PatternMatchAddressTemplateB", PatternMatchAddressTemplateB.class).syncUninterruptibly();
+		Assertions.assertTrue(NeuronStateTestUtils.bringOnline("PatternMatchAddressTemplateB", "patternMatchAddressB", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
 		
 		// Check that the message is delivered
 		Assertions.assertTrue(patternMatchAddress_MessageProcessed.awaitUninterruptibly(250));
@@ -185,8 +185,8 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 		}
 		Assertions.assertTrue(patternMatchAddress_MessageProcessed.isSuccess());
 		
-		TemplateStateManagerTestUtils.takeTemplateOffline("PatternMatchAddressTemplateA");
-		TemplateStateManagerTestUtils.takeTemplateOffline("PatternMatchAddressTemplateB");
+		TemplateStateTestUtils.takeTemplateOffline("PatternMatchAddressTemplateA");
+		TemplateStateTestUtils.takeTemplateOffline("PatternMatchAddressTemplateB");
 	}
 	
 	public static class PatternMatchAddressTemplateA extends DefaultTestNeuronTemplateBase {
@@ -275,12 +275,12 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 	public void patternMatchMultipleAddresses() {
 		patternMatchMultipleAddresses_MessagesProcessed = NeuronApplication.newPromise();
 		// submit messages into a bus at several addresses 
-		TemplateStateManagerTestUtils.registerAndBringOnline("PatternMatchMultipleAddressesTemplateA", PatternMatchMultipleAddressesTemplateA.class).syncUninterruptibly();
-		Assertions.assertTrue(NeuronStateManagerTestUtils.bringOnline("PatternMatchMultipleAddressesTemplateA", "patternMatchMultipleAddressesA", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
+		TemplateStateTestUtils.registerAndBringOnline("PatternMatchMultipleAddressesTemplateA", PatternMatchMultipleAddressesTemplateA.class).syncUninterruptibly();
+		Assertions.assertTrue(NeuronStateTestUtils.bringOnline("PatternMatchMultipleAddressesTemplateA", "patternMatchMultipleAddressesA", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
 		
 		// another neuron listens on a pattern which matches all addresses
-		TemplateStateManagerTestUtils.registerAndBringOnline("PatternMatchMultipleAddressesTemplateB", PatternMatchMultipleAddressesTemplateB.class).syncUninterruptibly();
-		Assertions.assertTrue(NeuronStateManagerTestUtils.bringOnline("PatternMatchMultipleAddressesTemplateB", "patternMatchMultipleAddressesB", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
+		TemplateStateTestUtils.registerAndBringOnline("PatternMatchMultipleAddressesTemplateB", PatternMatchMultipleAddressesTemplateB.class).syncUninterruptibly();
+		Assertions.assertTrue(NeuronStateTestUtils.bringOnline("PatternMatchMultipleAddressesTemplateB", "patternMatchMultipleAddressesB", ObjectConfigBuilder.emptyConfig()).syncUninterruptibly().isSuccess());
 		
 		// Check that the messages are all sent once the neuron gets online
 		Assertions.assertTrue(patternMatchMultipleAddresses_MessagesProcessed.awaitUninterruptibly(250));
@@ -289,8 +289,8 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 		}
 		Assertions.assertTrue(patternMatchMultipleAddresses_MessagesProcessed.isSuccess());
 		
-		TemplateStateManagerTestUtils.takeTemplateOffline("PatternMatchMultipleAddressesTemplateA");
-		TemplateStateManagerTestUtils.takeTemplateOffline("PatternMatchMultipleAddressesTemplateB");
+		TemplateStateTestUtils.takeTemplateOffline("PatternMatchMultipleAddressesTemplateA");
+		TemplateStateTestUtils.takeTemplateOffline("PatternMatchMultipleAddressesTemplateB");
 		
 	}
 	

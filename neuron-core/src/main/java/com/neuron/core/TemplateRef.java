@@ -4,7 +4,7 @@ import java.util.List;
 
 import org.apache.logging.log4j.Level;
 
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 
 import io.netty.util.concurrent.Promise;
 

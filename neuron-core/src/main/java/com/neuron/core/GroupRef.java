@@ -1,6 +1,6 @@
 package com.neuron.core;
 
-import com.neuron.core.GroupStateManager.GroupState;
+import com.neuron.core.GroupStateSystem.GroupState;
 
 import io.netty.util.concurrent.Promise;
 

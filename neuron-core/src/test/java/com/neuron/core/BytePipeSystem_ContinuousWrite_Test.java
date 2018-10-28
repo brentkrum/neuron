@@ -1,6 +1,6 @@
 package com.neuron.core;
 
-import static com.neuron.core.test.NeuronStateManagerTestUtils.createFutureForState;
+import static com.neuron.core.test.NeuronStateTestUtils.createFutureForState;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.apache.logging.log4j.LogManager;
@@ -11,12 +11,12 @@ import org.junit.jupiter.api.Test;
 
 import com.neuron.core.BytePipeSystem.IPipeWriterContext;
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.INeuronManagement;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.INeuronManagement;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
+import com.neuron.core.TemplateStateSystem.ITemplateManagement;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 
 import io.netty.util.concurrent.Promise;
 
@@ -46,20 +46,20 @@ public class BytePipeSystem_ContinuousWrite_Test {
 	public void testReadWrite() {
 		m_testFuture = NeuronApplication.getTaskPool().next().newPromise();
 		
-		ITemplateManagement tMgt = TemplateStateManager.registerTemplate("RWTestTemplateA", RWTestTemplateA.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgt).syncUninterruptibly().isSuccess());
+		ITemplateManagement tMgt = TemplateStateSystem.registerTemplate("RWTestTemplateA", RWTestTemplateA.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline(tMgt).syncUninterruptibly().isSuccess());
 		
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron(tMgt.currentRef(), "NeuronA");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron(tMgt.currentRef(), "NeuronA");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 
 				
-		ITemplateManagement tMgtB = TemplateStateManager.registerTemplate("RWTestTemplateB", RWTestTemplateB.class);
-		INeuronManagement nMgtB = NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB");
+		ITemplateManagement tMgtB = TemplateStateSystem.registerTemplate("RWTestTemplateB", RWTestTemplateB.class);
+		INeuronManagement nMgtB = NeuronStateSystem.registerNeuron("RWTestTemplateB", "NeuronB");
 
 		for(int i=0; i<100; i++) {
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Template B online");
-			assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgtB).syncUninterruptibly().isSuccess());
+			assertTrue(TemplateStateTestUtils.bringTemplateOnline(tMgtB).syncUninterruptibly().isSuccess());
 			
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
 			assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config().build()));
@@ -74,7 +74,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 	
 			// Take template B offline (hence neuron B too)
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Take template B offline");
-			TemplateStateManagerTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
+			TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
 			
 			LogManager.getLogger(BytePipeSystem_ContinuousWrite_Test.class).info("Done reading {} firstLong={} lastLong={}", i, m_firstLong, m_lastLong);
 			
@@ -83,7 +83,7 @@ public class BytePipeSystem_ContinuousWrite_Test {
 		}
 		
 		// Take template A offline (hence neuron A too)
-		TemplateStateManagerTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
+		TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
 	}
 
 	public static class RWTestTemplateA extends DefaultTestNeuronTemplateBase {

@@ -2,9 +2,9 @@ package com.neuron.core.test;
 
 import com.neuron.core.GroupRef;
 import com.neuron.core.GroupRef.IGroupStateLock;
-import com.neuron.core.GroupStateManager;
-import com.neuron.core.GroupStateManager.GroupState;
-import com.neuron.core.GroupStateManager.IGroupManagement;
+import com.neuron.core.GroupStateSystem;
+import com.neuron.core.GroupStateSystem.GroupState;
+import com.neuron.core.GroupStateSystem.IGroupManagement;
 import com.neuron.core.NeuronApplication;
 
 import io.netty.util.concurrent.Future;
@@ -46,7 +46,7 @@ public final class GroupStateManagerTestUtils {
 
 	public static Future<Void> bringOnline(String groupName) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
-		final IGroupManagement mgt = GroupStateManager.manage(groupName);
+		final IGroupManagement mgt = GroupStateSystem.manage(groupName);
 		if (!mgt.bringOnline()) {
 			reachedState.setFailure(new RuntimeException("bringOnline() returned false"));
 			return reachedState;
@@ -69,7 +69,7 @@ public final class GroupStateManagerTestUtils {
 	
 	public static Future<Void> takeOffline(String groupName) {
 		final Promise<Void> reachedState = NeuronApplication.getTaskPool().next().newPromise();
-		try(IGroupStateLock lock = GroupStateManager.manage(groupName).currentRef().lockState()) {
+		try(IGroupStateLock lock = GroupStateSystem.manage(groupName).currentRef().lockState()) {
 			if(!lock.takeOffline()) {
 				return NeuronApplication.getTaskPool().next().newFailedFuture(new RuntimeException("Call to lock.takeOffline() returned false"));
 			}

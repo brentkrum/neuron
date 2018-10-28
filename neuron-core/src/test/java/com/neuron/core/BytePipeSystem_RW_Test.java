@@ -1,6 +1,6 @@
 package com.neuron.core;
 
-import static com.neuron.core.test.NeuronStateManagerTestUtils.createFutureForState;
+import static com.neuron.core.test.NeuronStateTestUtils.createFutureForState;
 
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -11,10 +11,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.neuron.core.BytePipeSystem.IPipeWriterContext;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 
 import io.netty.util.concurrent.Promise;
 
@@ -39,22 +39,22 @@ public class BytePipeSystem_RW_Test {
 	public void testReadWrite() {
 		m_testFuture = NeuronApplication.getTaskPool().next().newPromise();
 		
-		TemplateStateManagerTestUtils.registerAndBringOnline("RWTestTemplateA", RWTestTemplateA.class).syncUninterruptibly();
-		NeuronStateManager.registerNeuron("RWTestTemplateA", "NeuronA").bringOnline(ObjectConfigBuilder.config().build());
-		createFutureForState(NeuronStateManager.manage("NeuronA").currentRef(), NeuronState.Online).syncUninterruptibly();
+		TemplateStateTestUtils.registerAndBringOnline("RWTestTemplateA", RWTestTemplateA.class).syncUninterruptibly();
+		NeuronStateSystem.registerNeuron("RWTestTemplateA", "NeuronA").bringOnline(ObjectConfigBuilder.config().build());
+		createFutureForState(NeuronStateSystem.manage("NeuronA").currentRef(), NeuronState.Online).syncUninterruptibly();
 
 		
-		TemplateStateManagerTestUtils.registerAndBringOnline("RWTestTemplateB", RWTestTemplateB.class).syncUninterruptibly();
-		NeuronStateManager.registerNeuron("RWTestTemplateB", "NeuronB").bringOnline(ObjectConfigBuilder.config().build());
-		createFutureForState(NeuronStateManager.manage("NeuronB").currentRef(), NeuronState.Online).syncUninterruptibly();
+		TemplateStateTestUtils.registerAndBringOnline("RWTestTemplateB", RWTestTemplateB.class).syncUninterruptibly();
+		NeuronStateSystem.registerNeuron("RWTestTemplateB", "NeuronB").bringOnline(ObjectConfigBuilder.config().build());
+		createFutureForState(NeuronStateSystem.manage("NeuronB").currentRef(), NeuronState.Online).syncUninterruptibly();
 		
 		Assertions.assertTrue(m_testFuture.awaitUninterruptibly(1000), "Timeout waiting for test");
 		if (!m_testFuture.isSuccess()) {
 			Assertions.fail(m_testFuture.cause());
 		}
 
-		TemplateStateManagerTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
-		TemplateStateManagerTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
+		TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
+		TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
 	}
 
 	public static class RWTestTemplateA extends DefaultTestNeuronTemplateBase {

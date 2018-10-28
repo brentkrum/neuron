@@ -9,14 +9,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.neuron.core.MessagePipeSystem.IPipeWriterContext;
-import com.neuron.core.NeuronStateManager.INeuronManagement;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.INeuronManagement;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.socket.InboundSocketNeuron;
 import com.neuron.core.socket.InboundSocketNeuronTemplate;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.NeuronStateManagerTestUtils;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.NeuronStateTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 import com.neuron.core.test.TestUtils;
 import com.neuron.utility.CharSequenceTrie;
 
@@ -44,7 +44,7 @@ public class InboundSocketNeuron_Simple_Test {
 		System.setProperty("logger.com.neuron.core.socket.InboundSocketNeuron", "DEBUG");
 
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
-		TemplateStateManagerTestUtils.registerAndBringOnline("InboundSocketNeuronTemplate", InboundSocketNeuronTemplate.class).awaitUninterruptibly();
+		TemplateStateTestUtils.registerAndBringOnline("InboundSocketNeuronTemplate", InboundSocketNeuronTemplate.class).awaitUninterruptibly();
 	}
 
 	@AfterAll
@@ -59,12 +59,12 @@ public class InboundSocketNeuron_Simple_Test {
 
 		
 		LogManager.getLogger(InboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Create and bring OutboundSocket online");
-		INeuronManagement nInboundSocket = NeuronStateManager.registerNeuron("InboundSocketNeuronTemplate", "InboundSocketServer");
+		INeuronManagement nInboundSocket = NeuronStateSystem.registerNeuron("InboundSocketNeuronTemplate", "InboundSocketServer");
 		assertTrue(nInboundSocket.bringOnline(ObjectConfigBuilder.config()
 				.option(InboundSocketNeuronTemplate.Config_Port, 9999)
 				.build()
 			));
-		assertTrue(NeuronStateManagerTestUtils.createFutureForState(nInboundSocket.currentRef(), NeuronState.Online).awaitUninterruptibly(1000));
+		assertTrue(NeuronStateTestUtils.createFutureForState(nInboundSocket.currentRef(), NeuronState.Online).awaitUninterruptibly(1000));
 		
 		
 		// Create server
@@ -78,10 +78,10 @@ public class InboundSocketNeuron_Simple_Test {
 
 		
 		LogManager.getLogger(InboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Create and bring Test Neuron online");
-		TemplateStateManagerTestUtils.registerAndBringOnline("TestWriterTemplate", TestWriterTemplate.class).awaitUninterruptibly();
-		INeuronManagement nTest = NeuronStateManager.registerNeuron("TestWriterTemplate", "TestNeuron");
+		TemplateStateTestUtils.registerAndBringOnline("TestWriterTemplate", TestWriterTemplate.class).awaitUninterruptibly();
+		INeuronManagement nTest = NeuronStateSystem.registerNeuron("TestWriterTemplate", "TestNeuron");
 		assertTrue(nTest.bringOnline(ObjectConfigBuilder.config().build()));
-		assertTrue(NeuronStateManagerTestUtils.createFutureForState(nTest.currentRef(), NeuronState.Online).awaitUninterruptibly(1000));
+		assertTrue(NeuronStateTestUtils.createFutureForState(nTest.currentRef(), NeuronState.Online).awaitUninterruptibly(1000));
 
 		
 		LogManager.getLogger(InboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Connect client");
@@ -101,13 +101,13 @@ public class InboundSocketNeuron_Simple_Test {
 
 		// Take down outbound socket
 		LogManager.getLogger(InboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Take test writer offline");
-		TemplateStateManagerTestUtils.takeTemplateOffline("TestWriterTemplate");
+		TemplateStateTestUtils.takeTemplateOffline("TestWriterTemplate");
 		LogManager.getLogger(InboundSocketNeuron_Simple_Test.class).info(">>>>>>>> Take outbound socket offline");
-		TemplateStateManagerTestUtils.takeTemplateOffline("InboundSocketNeuronTemplate");
+		TemplateStateTestUtils.takeTemplateOffline("InboundSocketNeuronTemplate");
 		
 //		assertTrue(createFutureForState(nOutboundSocket.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000));
 //		assertTrue(createFutureForState(nOutboundSocket.currentRef(), NeuronState.Offline).isSuccess());
-		// assertTrue(NeuronStateManagerTestUtils.logContains(nMgt.currentRef(), "Neuron config item Config_InetHost is either missing or invalid"));
+		// assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "Neuron config item Config_InetHost is either missing or invalid"));
 	}
 	
 	@Sharable

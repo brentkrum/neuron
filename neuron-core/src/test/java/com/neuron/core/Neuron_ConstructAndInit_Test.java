@@ -1,6 +1,6 @@
 package com.neuron.core;
 
-import static com.neuron.core.test.NeuronStateManagerTestUtils.createFutureForState;
+import static com.neuron.core.test.NeuronStateTestUtils.createFutureForState;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.concurrent.TimeUnit;
@@ -11,14 +11,14 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.INeuronManagement;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.INeuronManagement;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.ITemplateManagement;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.NeuronStateManagerTestUtils;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.NeuronStateTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
@@ -30,7 +30,7 @@ public class Neuron_ConstructAndInit_Test
 	public static void init() {
 		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
-		TemplateStateManager.enableSelfTest();
+		TemplateStateSystem.enableSelfTest();
 	}
 	
 	@AfterAll
@@ -40,15 +40,15 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void constructorException() {
-		TemplateStateManager.registerTemplate("TestTemplate", TestTemplate.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline("TestTemplate").awaitUninterruptibly(1000));
+		TemplateStateSystem.registerTemplate("TestTemplate", TestTemplate.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline("TestTemplate").awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("TestTemplate", "Test");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("TestTemplate", "Test");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
-		assertTrue(NeuronStateManagerTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Oops"));
+		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Oops"));
 	}
 	
 	public static class TestTemplate extends DefaultTestNeuronTemplateBase {
@@ -66,15 +66,15 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void constructorReturnNull() {
-		TemplateStateManager.registerTemplate("ReturnsNullTemplate", ReturnsNullTemplate.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline("ReturnsNullTemplate").awaitUninterruptibly(1000));
+		TemplateStateSystem.registerTemplate("ReturnsNullTemplate", ReturnsNullTemplate.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline("ReturnsNullTemplate").awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("ReturnsNullTemplate", "ReturnsNullTemplateNeuron");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("ReturnsNullTemplate", "ReturnsNullTemplateNeuron");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
-		assertTrue(NeuronStateManagerTestUtils.logContains(nMgt.currentRef(), "template.createNeuron() returned null"));
+		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "template.createNeuron() returned null"));
 	}
 	public static class ReturnsNullTemplate extends DefaultTestNeuronTemplateBase {
 		
@@ -91,15 +91,15 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void initFail() {
-		TemplateStateManager.registerTemplate("InitFailTestTemplate", InitFailTestTemplate.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline("InitFailTestTemplate").awaitUninterruptibly(1000));
+		TemplateStateSystem.registerTemplate("InitFailTestTemplate", InitFailTestTemplate.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline("InitFailTestTemplate").awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("InitFailTestTemplate", "InitFailTest");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("InitFailTestTemplate", "InitFailTest");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
-		assertTrue(NeuronStateManagerTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Oops"));
+		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Oops"));
 	}
 	public static class InitFailTestTemplate extends DefaultTestNeuronTemplateBase {
 		
@@ -128,17 +128,17 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void initFailAsync() {
-		TemplateStateManager.registerTemplate("InitFailAsyncTestTemplate", InitFailAsyncTestTemplate.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline("InitFailAsyncTestTemplate").awaitUninterruptibly(1000));
+		TemplateStateSystem.registerTemplate("InitFailAsyncTestTemplate", InitFailAsyncTestTemplate.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline("InitFailAsyncTestTemplate").awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("InitFailAsyncTestTemplate", "initFailAsync");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("InitFailAsyncTestTemplate", "initFailAsync");
 		long startMS = System.currentTimeMillis();
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
 		assertTrue(System.currentTimeMillis()-startMS > 100, "Returned too soon");
-		assertTrue(NeuronStateManagerTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Oops"));
+		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Oops"));
 	}
 
 	public static class InitFailAsyncTestTemplate extends DefaultTestNeuronTemplateBase {
@@ -170,15 +170,15 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void initTimeout() {
-		TemplateStateManager.registerTemplate("InitTimeoutTestTemplate", InitTimeoutTestTemplate.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline("InitTimeoutTestTemplate").awaitUninterruptibly(1000));
+		TemplateStateSystem.registerTemplate("InitTimeoutTestTemplate", InitTimeoutTestTemplate.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline("InitTimeoutTestTemplate").awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("InitTimeoutTestTemplate", "InitTimeout");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("InitTimeoutTestTemplate", "InitTimeout");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
-		assertTrue(NeuronStateManagerTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Timeout of 1ms initializing neuron"));
+		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Timeout of 1ms initializing neuron"));
 	}
 
 	public static class InitTimeoutTestTemplate extends DefaultTestNeuronTemplateBase {
@@ -225,10 +225,10 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void onlineOffline() {
-		ITemplateManagement tMgt = TemplateStateManager.registerTemplate("OnlineOffline", OnlineOffline.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgt).awaitUninterruptibly(1000));
+		ITemplateManagement tMgt = TemplateStateSystem.registerTemplate("OnlineOffline", OnlineOffline.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline(tMgt).awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("OnlineOffline", "OnlineOfflineTest");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("OnlineOffline", "OnlineOfflineTest");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		
@@ -237,8 +237,8 @@ public class Neuron_ConstructAndInit_Test
 		}
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
 		
-		final Future<Void> offlineFuture = TemplateStateManagerTestUtils.createFutureForState(tMgt.currentRef(), TemplateState.Offline);
-		TemplateStateManagerTestUtils.takeTemplateOffline(tMgt);
+		final Future<Void> offlineFuture = TemplateStateTestUtils.createFutureForState(tMgt.currentRef(), TemplateState.Offline);
+		TemplateStateTestUtils.takeTemplateOffline(tMgt);
 		assertTrue(offlineFuture.awaitUninterruptibly(1000));
 	}
 	
@@ -263,15 +263,15 @@ public class Neuron_ConstructAndInit_Test
 	
 	@Test
 	public void onlineTemplateOffline() {
-		ITemplateManagement tMgt = TemplateStateManager.registerTemplate("OnlineTemplateOffline", OnlineTemplateOffline.class);
-		assertTrue(TemplateStateManagerTestUtils.bringTemplateOnline(tMgt).awaitUninterruptibly(1000));
+		ITemplateManagement tMgt = TemplateStateSystem.registerTemplate("OnlineTemplateOffline", OnlineTemplateOffline.class);
+		assertTrue(TemplateStateTestUtils.bringTemplateOnline(tMgt).awaitUninterruptibly(1000));
 
-		INeuronManagement nMgt = NeuronStateManager.registerNeuron("OnlineTemplateOffline", "OnlineTemplateOfflineTest");
+		INeuronManagement nMgt = NeuronStateSystem.registerNeuron("OnlineTemplateOffline", "OnlineTemplateOfflineTest");
 		assertTrue(nMgt.bringOnline(ObjectConfigBuilder.config().build()));
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		
-		final Future<Void> offlineFuture = TemplateStateManagerTestUtils.createFutureForState(tMgt.currentRef(), TemplateState.Offline);
-		TemplateStateManagerTestUtils.takeTemplateOffline(tMgt);
+		final Future<Void> offlineFuture = TemplateStateTestUtils.createFutureForState(tMgt.currentRef(), TemplateState.Offline);
+		TemplateStateTestUtils.takeTemplateOffline(tMgt);
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
 		assertTrue(offlineFuture.awaitUninterruptibly(1000));
 	}

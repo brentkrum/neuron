@@ -3,7 +3,7 @@ package com.neuron.core;
 import org.apache.logging.log4j.ThreadContext;
 
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 
 import io.netty.util.internal.PlatformDependent;
 

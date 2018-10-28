@@ -11,9 +11,9 @@ import org.apache.logging.log4j.core.config.Configurator;
 import org.apache.logging.log4j.message.ParameterizedMessage;
 
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 import com.neuron.core.log4j.Log4jConsoleLogger;
 import com.neuron.utility.FastLinkedListInit;
 import com.neuron.utility.StackTraceUtil;
@@ -71,13 +71,21 @@ public final class NeuronApplication {
 	}
 	
 	static void registerCoreSystems() {
+		// Utility subsystems
 		StatusSystem.register();
 		TimerSystem.register();
 		NamedValueSystem.register();
+		
+		// Resources
 		BytePipeSystem.register();
 		MessagePipeSystem.register();
 		MessageQueueSystem.register();
 		AddressableDuplexBusSystem.register();
+		
+		// Neurons
+		GroupStateSystem.register();
+		TemplateStateSystem.register();
+		NeuronStateSystem.register();
 	}
 
 	public static void fatalExit() {

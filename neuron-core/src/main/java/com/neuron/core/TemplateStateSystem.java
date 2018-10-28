@@ -15,9 +15,9 @@ import org.apache.logging.log4j.Logger;
 
 import com.neuron.core.GroupRef.IGroupStateListenerRemoval;
 import com.neuron.core.GroupRef.IGroupStateLock;
-import com.neuron.core.GroupStateManager.GroupState;
+import com.neuron.core.GroupStateSystem.GroupState;
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
@@ -31,7 +31,7 @@ import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import io.netty.util.concurrent.ScheduledFuture;
 
-public final class TemplateStateManager {
+public final class TemplateStateSystem {
 	public enum TemplateState { NA, BeingCreated, Initializing, RunSelfTest, SystemOnline, Online, TakeNeuronsOffline, SystemOffline, Offline };
 
 	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.TemplateStateManager.lockLeakDetection", false);
@@ -39,7 +39,7 @@ public final class TemplateStateManager {
 	private static final long DEFAULT_SELF_TEST_TIMEOUT_IN_MS = Config.getFWInt("core.TemplateStateManager.defaultSelfTestTimeout", 15000);
 	private static final int MAX_LOG_SIZE = Config.getFWInt("core.TemplateStateManager.logSize", 64);
 	
-	private static final Logger LOG = LogManager.getLogger(TemplateStateManager.class);
+	private static final Logger LOG = LogManager.getLogger(TemplateStateSystem.class);
 
 	private static final ReadWriteLock m_rwLock = new ReentrantReadWriteLock();
 	private static final IntTrie<Management> m_templatesById = new IntTrie<>();
@@ -51,7 +51,7 @@ public final class TemplateStateManager {
 	}
 	
 	public static ITemplateManagement registerTemplate(String templateName, Class<? extends INeuronTemplate> templateClass) {
-		return registerTemplate(GroupStateManager.defaultGroupRef().name(), templateName, templateClass);
+		return registerTemplate(GroupStateSystem.defaultGroupRef().name(), templateName, templateClass);
 	}
 	
 	public static ITemplateManagement registerTemplate(String groupName, String templateName, Class<? extends INeuronTemplate> templateClass) {
@@ -110,7 +110,7 @@ public final class TemplateStateManager {
 			} catch (Exception ex) {
 				throw new IllegalArgumentException("The template " + templateName + " with the class " + m_templateClass.getCanonicalName() + " does not have a constructor which takes only a TemplateRef", ex);
 			}
-			m_current = new InstanceManagement(GroupStateManager.manage(groupName).currentRef(), m_nextTemplateGen.incrementAndGet());
+			m_current = new InstanceManagement(GroupStateSystem.manage(groupName).currentRef(), m_nextTemplateGen.incrementAndGet());
 			m_current.initOffline();
 		}
 		
@@ -122,7 +122,7 @@ public final class TemplateStateManager {
 		@Override
 		public boolean bringOnline() {
 			// This could be called by anybody anywhere
-			final GroupRef currentGroupRef = GroupStateManager.manage(m_groupName).currentRef();
+			final GroupRef currentGroupRef = GroupStateSystem.manage(m_groupName).currentRef();
 			try(final IGroupStateLock groupLock = currentGroupRef.lockState()) {
 				if (groupLock.currentState() != GroupState.Online) {
 					return false;
@@ -631,7 +631,7 @@ public final class TemplateStateManager {
 
 				@Override
 				public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config) {
-					// Exceptions are handled by NeuronStateManager
+					// Exceptions are handled by NeuronStateSystem
 					INeuronInitialization neuron = m_template.createNeuron(ref, config);
 					return neuron;
 				}
@@ -724,5 +724,23 @@ public final class TemplateStateManager {
 		initDone.addListener((Future<Void> f) -> {
 			initTimeout.cancel(false);
 		});
+	}
+	
+	static void register() {
+		NeuronApplication.register(new Registrant());
+	}
+	private static class Registrant implements INeuronApplicationSystem {
+
+		@Override
+		public String systemName()
+		{
+			return "TemplateStateSystem";
+		}
+
+		@Override
+		public Future<Void> startShutdown() {
+			return INeuronApplicationSystem.super.startShutdown();
+		}
+		
 	}
 }

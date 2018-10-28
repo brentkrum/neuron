@@ -17,7 +17,7 @@ import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.StatusSystem.StatusType;
 import com.neuron.core.TemplateRef.ITemplateStateListenerRemoval;
 import com.neuron.core.TemplateRef.ITemplateStateLock;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.FastLinkedList;
@@ -28,15 +28,15 @@ import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import io.netty.util.concurrent.ScheduledFuture;
 
-public final class NeuronStateManager {
+public final class NeuronStateSystem {
 	public enum NeuronState { NA, BeingCreated, Initializing, Connect, SystemOnline, Online, GoingOffline, Disconnecting, Deinitializing, SystemOffline, Offline};
 
-	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.NeuronStateManager.lockLeakDetection", false);
-	private static final long DEFAULT_INIT_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateManager.defaultInitTimeout", 5000);
-	private static final int MAX_LOG_SIZE = Config.getFWInt("core.NeuronStateManager.logSize", 64);
-	private static final int MAX_OLD_GEN = Config.getFWInt("core.NeuronStateManager.maxNumOldGen", 4);
+	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.NeuronStateSystem.lockLeakDetection", false);
+	private static final long DEFAULT_INIT_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateSystem.defaultInitTimeout", 5000);
+	private static final int MAX_LOG_SIZE = Config.getFWInt("core.NeuronStateSystem.logSize", 64);
+	private static final int MAX_OLD_GEN = Config.getFWInt("core.NeuronStateSystem.maxNumOldGen", 4);
 	
-	private static final Logger LOG = LogManager.getLogger(NeuronStateManager.class);
+	private static final Logger LOG = LogManager.getLogger(NeuronStateSystem.class);
 
 	private static final ReadWriteLock m_rwLock = new ReentrantReadWriteLock();
 	private static final IntTrie<Management> m_neuronsById = new IntTrie<>();
@@ -113,7 +113,7 @@ public final class NeuronStateManager {
 			m_id = m_nextNeuronId.incrementAndGet();
 			m_templateName = templateName;
 			m_name = neuronName;
-			m_current = new InstanceManagement(TemplateStateManager.manage(m_templateName).currentRef(), m_nextNeuronGen.incrementAndGet(), null);
+			m_current = new InstanceManagement(TemplateStateSystem.manage(m_templateName).currentRef(), m_nextNeuronGen.incrementAndGet(), null);
 			m_current.initOffline();
 		}
 		
@@ -133,7 +133,7 @@ public final class NeuronStateManager {
 		// This could be called by anybody anywhere
 		@Override
 		public boolean bringOnline(ObjectConfig config) {
-			final TemplateRef currentTemplateRef = TemplateStateManager.manage(m_templateName).currentRef();
+			final TemplateRef currentTemplateRef = TemplateStateSystem.manage(m_templateName).currentRef();
 			try(final ITemplateStateLock templateLock = currentTemplateRef.lockState()) {
 				if (templateLock.currentState() != TemplateState.Online) {
 					final TemplateNotOnlineException ex = new TemplateNotOnlineException(currentTemplateRef);
@@ -799,4 +799,22 @@ public final class NeuronStateManager {
 		});
 	}
 	
+	
+	static void register() {
+		NeuronApplication.register(new Registrant());
+	}
+	private static class Registrant implements INeuronApplicationSystem {
+
+		@Override
+		public String systemName()
+		{
+			return "NeuronStateSystem";
+		}
+
+		@Override
+		public Future<Void> startShutdown() {
+			return INeuronApplicationSystem.super.startShutdown();
+		}
+		
+	}
 }

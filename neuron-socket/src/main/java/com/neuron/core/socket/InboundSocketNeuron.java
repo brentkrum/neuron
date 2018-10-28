@@ -17,7 +17,7 @@ import com.neuron.core.NeuronApplication;
 import com.neuron.core.NeuronRef;
 import com.neuron.core.NeuronRef.INeuronStateListenerRemoval;
 import com.neuron.core.NeuronRef.INeuronStateLock;
-import com.neuron.core.NeuronStateManager.NeuronState;
+import com.neuron.core.NeuronStateSystem.NeuronState;
 
 import io.netty.bootstrap.ServerBootstrap;
 import io.netty.buffer.ByteBuf;

@@ -11,10 +11,10 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.neuron.core.TemplateRef.ITemplateStateLock;
-import com.neuron.core.TemplateStateManager.ITemplateManagement;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.TemplateStateSystem.ITemplateManagement;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 import com.neuron.core.test.TestUtils;
 
 import io.netty.util.concurrent.Future;
@@ -37,16 +37,16 @@ public class NeuronTemplate_ConstructAndInit_Test
 	
 	@Test
 	public void constructorException() {
-		TemplateStateManager.registerTemplate("ConstructorExceptionTemplate", ConstructorExceptionTemplate.class);
+		TemplateStateSystem.registerTemplate("ConstructorExceptionTemplate", ConstructorExceptionTemplate.class);
 		
-		ITemplateManagement mgt = TemplateStateManager.manage("ConstructorExceptionTemplate");
+		ITemplateManagement mgt = TemplateStateSystem.manage("ConstructorExceptionTemplate");
 		
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline(mgt);
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline(mgt);
 		assertTrue(f.awaitUninterruptibly(500), "Timeout waiting for template to be created");
 		assertFalse(f.isSuccess(), "ConstructorExceptionTemplate was initialized successfully");
 		
-		assertTrue(TemplateStateManagerTestUtils.logContains(mgt.currentRef(), "InvocationTargetException"));
-		assertTrue(TemplateStateManagerTestUtils.logContains(mgt.currentRef(), "Oops"));
+		assertTrue(TemplateStateTestUtils.logContains(mgt.currentRef(), "InvocationTargetException"));
+		assertTrue(TemplateStateTestUtils.logContains(mgt.currentRef(), "Oops"));
 		
 		try(ITemplateStateLock lock = mgt.currentRef().lockState()) {
 			assertTrue(lock.currentState() == TemplateState.Offline);
@@ -65,13 +65,13 @@ public class NeuronTemplate_ConstructAndInit_Test
 	
 	@Test
 	public void initException() {
-		TemplateStateManager.registerTemplate("InitExceptionTemplate", InitExceptionTemplate.class);
-		ITemplateManagement mgt = TemplateStateManager.manage("InitExceptionTemplate");
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline(mgt);
+		TemplateStateSystem.registerTemplate("InitExceptionTemplate", InitExceptionTemplate.class);
+		ITemplateManagement mgt = TemplateStateSystem.manage("InitExceptionTemplate");
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline(mgt);
 		assertTrue(f.awaitUninterruptibly(500), "Timeout waiting for template to be created");
 		assertFalse(f.isSuccess(), "ConstructorExceptionTemplate was initialized successfully");
 		assertFalse(f.isSuccess(), "InitExceptionTemplate was initialized successfully");
-		assertTrue(TemplateStateManagerTestUtils.logContains(mgt.currentRef(), "Oops"));
+		assertTrue(TemplateStateTestUtils.logContains(mgt.currentRef(), "Oops"));
 
 		try(ITemplateStateLock lock = mgt.currentRef().lockState()) {
 			assertTrue(lock.currentState() == TemplateState.Offline);
@@ -95,13 +95,13 @@ public class NeuronTemplate_ConstructAndInit_Test
 	
 	@Test
 	public void initFail() {
-		TemplateStateManager.registerTemplate("InitFailTemplate", InitFailTemplate.class);
-		ITemplateManagement mgt = TemplateStateManager.manage("InitFailTemplate");
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline(mgt);
+		TemplateStateSystem.registerTemplate("InitFailTemplate", InitFailTemplate.class);
+		ITemplateManagement mgt = TemplateStateSystem.manage("InitFailTemplate");
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline(mgt);
 		
 		assertTrue(f.awaitUninterruptibly(1000), "Timeout waiting for template to be created");
 		assertFalse(f.isSuccess(), "InitFailTemplate was initialized successfully");
-		assertTrue(TemplateStateManagerTestUtils.logContains(mgt.currentRef(), "Oops"));
+		assertTrue(TemplateStateTestUtils.logContains(mgt.currentRef(), "Oops"));
 		
 		try(ITemplateStateLock lock = mgt.currentRef().lockState()) {
 			assertTrue(lock.currentState() == TemplateState.Offline);
@@ -125,14 +125,14 @@ public class NeuronTemplate_ConstructAndInit_Test
 	
 	@Test
 	public void initFailAsync() {
-		TemplateStateManager.registerTemplate("InitFailAsyncTemplate", InitFailAsyncTemplate.class);
-		ITemplateManagement mgt = TemplateStateManager.manage("InitFailAsyncTemplate");
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline(mgt);
+		TemplateStateSystem.registerTemplate("InitFailAsyncTemplate", InitFailAsyncTemplate.class);
+		ITemplateManagement mgt = TemplateStateSystem.manage("InitFailAsyncTemplate");
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline(mgt);
 		long startMS = System.currentTimeMillis();
 		assertTrue(f.awaitUninterruptibly(1000), "Timeout waiting for template to be created");
 		assertTrue(System.currentTimeMillis()-startMS > 100, "Returned too soon");
 		assertFalse(f.isSuccess());
-		assertTrue(TemplateStateManagerTestUtils.logContains(mgt.currentRef(), "Oops"));
+		assertTrue(TemplateStateTestUtils.logContains(mgt.currentRef(), "Oops"));
 		
 		try(ITemplateStateLock lock = mgt.currentRef().lockState()) {
 			assertTrue(lock.currentState() == TemplateState.Offline);
@@ -158,13 +158,13 @@ public class NeuronTemplate_ConstructAndInit_Test
 	
 	@Test
 	public void initTimeout() {
-		TemplateStateManager.registerTemplate("InitTimeoutTemplate", InitTimeoutTemplate.class);
-		ITemplateManagement mgt = TemplateStateManager.manage("InitTimeoutTemplate");
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline(mgt);
+		TemplateStateSystem.registerTemplate("InitTimeoutTemplate", InitTimeoutTemplate.class);
+		ITemplateManagement mgt = TemplateStateSystem.manage("InitTimeoutTemplate");
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline(mgt);
 		
 		assertTrue(f.awaitUninterruptibly(1000), "Timeout waiting for template to be created");
 		assertFalse(f.isSuccess());
-		assertTrue(TemplateStateManagerTestUtils.logContains(mgt.currentRef(), "Timeout"));
+		assertTrue(TemplateStateTestUtils.logContains(mgt.currentRef(), "Timeout"));
 		
 		try(ITemplateStateLock lock = mgt.currentRef().lockState()) {
 			assertTrue(lock.currentState() == TemplateState.Offline);
@@ -196,7 +196,7 @@ public class NeuronTemplate_ConstructAndInit_Test
 	@Test
 	public void badConstructor() {
 		try {
-			TemplateStateManager.registerTemplate("BadConstructorTemplate", BadConstructorTemplate.class);
+			TemplateStateSystem.registerTemplate("BadConstructorTemplate", BadConstructorTemplate.class);
 			Assertions.fail("Should not get here");
 		} catch(IllegalArgumentException ex) {
 			assertTrue(ex.getCause() instanceof NoSuchMethodException);
@@ -215,7 +215,7 @@ public class NeuronTemplate_ConstructAndInit_Test
 	@Test
 	public void missingTemplate() {
 		try {
-			TemplateStateManager.manage("NOT-FOUND");
+			TemplateStateSystem.manage("NOT-FOUND");
 			Assertions.fail("Should not get here");
 		} catch(IllegalArgumentException ex) {
 		}
@@ -341,14 +341,14 @@ public class NeuronTemplate_ConstructAndInit_Test
 	public void multipleOnlineRequests() {
 		m_multipleOnlineRequestsWait = NeuronApplication.getTaskPool().next().newPromise();
 
-		TemplateStateManager.registerTemplate("MultiOnlineTemplate", MultiOnlineTemplate.class);
+		TemplateStateSystem.registerTemplate("MultiOnlineTemplate", MultiOnlineTemplate.class);
 		
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline("MultiOnlineTemplate");
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline("MultiOnlineTemplate");
 		// This is a second request for it to go Online and it is already doing so, so we just get a valid future to when it does
-		Future<Void> f2 = TemplateStateManagerTestUtils.bringTemplateOnline("MultiOnlineTemplate");
+		Future<Void> f2 = TemplateStateTestUtils.bringTemplateOnline("MultiOnlineTemplate");
 
 		// Template is on its way Online, let's check correct error when try to take offline
-		ITemplateManagement mgt = TemplateStateManager.manage("MultiOnlineTemplate");
+		ITemplateManagement mgt = TemplateStateSystem.manage("MultiOnlineTemplate");
 		try(ITemplateStateLock lock = mgt.currentRef().lockState()) {
 			assertFalse(lock.takeOffline());
 		}

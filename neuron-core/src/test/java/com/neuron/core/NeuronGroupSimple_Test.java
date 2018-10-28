@@ -7,11 +7,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import com.neuron.core.GroupRef.IGroupStateLock;
-import com.neuron.core.GroupStateManager.GroupState;
-import com.neuron.core.TemplateStateManager.TemplateState;
+import com.neuron.core.GroupStateSystem.GroupState;
+import com.neuron.core.TemplateStateSystem.TemplateState;
 import com.neuron.core.test.DefaultTestNeuronTemplateBase;
 import com.neuron.core.test.GroupStateManagerTestUtils;
-import com.neuron.core.test.TemplateStateManagerTestUtils;
+import com.neuron.core.test.TemplateStateTestUtils;
 import com.neuron.core.test.TestUtils;
 
 import io.netty.util.concurrent.Future;
@@ -32,17 +32,17 @@ public class NeuronGroupSimple_Test
 	
 	@Test
 	public void groupOffline() {
-		TemplateStateManager.registerTemplate("TestTemplate2", TestTemplate.class);
-		Future<Void> f = TemplateStateManagerTestUtils.bringTemplateOnline("TestTemplate2");
+		TemplateStateSystem.registerTemplate("TestTemplate2", TestTemplate.class);
+		Future<Void> f = TemplateStateTestUtils.bringTemplateOnline("TestTemplate2");
 		assertTrue(f.awaitUninterruptibly(1000), "Timeout waiting for TestTemplate to go online");
 		assertTrue(f.isSuccess());
 
 		TestUtils.printSystemStatuses();
-		try(IGroupStateLock lock = GroupStateManager.defaultGroupRef().lockState()) {
+		try(IGroupStateLock lock = GroupStateSystem.defaultGroupRef().lockState()) {
 			assertTrue(lock.takeOffline());
 		}
-		assertTrue(GroupStateManagerTestUtils.createFutureForState(GroupStateManager.defaultGroupRef(), GroupState.Offline).awaitUninterruptibly(1000));
-		assertTrue(TemplateStateManagerTestUtils.createFutureForState("TestTemplate2", TemplateState.Offline).awaitUninterruptibly(1000));
+		assertTrue(GroupStateManagerTestUtils.createFutureForState(GroupStateSystem.defaultGroupRef(), GroupState.Offline).awaitUninterruptibly(1000));
+		assertTrue(TemplateStateTestUtils.createFutureForState("TestTemplate2", TemplateState.Offline).awaitUninterruptibly(1000));
 	}
 
 	public static class TestTemplate extends DefaultTestNeuronTemplateBase {
