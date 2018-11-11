@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration>
+	<Properties>
+		<Property name="Root-Logger-Level" value="INFO"/>
+	</Properties>
+    <Appenders>
+	    <Console name="Console-Appender" target="SYSTEM_OUT" direct="true">
+            <PatternLayout>
+                <pattern>${Global-Appender-Pattern}</pattern>
+            </PatternLayout>
+        </Console>
+    </Appenders>
+    <Loggers>
+        <Root level="${Root-Logger-Level}">
+            <AppenderRef ref="Console-Appender"/>
+        </Root>
+    </Loggers>
+</Configuration>

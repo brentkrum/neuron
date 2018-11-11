@@ -1,5 +1,7 @@
 package com.neuron.utility;
 
+import java.util.Arrays;
+
 public final class CharSequenceTrie<TValue> {
 	private final IndexNode m_root = new IndexNode();
 	private int m_count;
@@ -9,6 +11,11 @@ public final class CharSequenceTrie<TValue> {
 
 	public int count() {
 		return m_count;
+	}
+	
+	public void clear() {
+		m_count = 0;
+		m_root.clear();
 	}
 	
 	public interface IForEach<T> {
@@ -314,6 +321,13 @@ public final class CharSequenceTrie<TValue> {
 		private ValueNode m_hereNode;
 		private int m_indexNodeCount;
 		private int m_valueNodeCount;
+		
+		void clear() {
+			Arrays.fill(m_nodes, null);
+			m_hereNode = null;
+			m_indexNodeCount = 0;
+			m_valueNodeCount = 0;
+		}
 		
 		Node getNodeIndex(int index) {
 			return m_nodes[index];

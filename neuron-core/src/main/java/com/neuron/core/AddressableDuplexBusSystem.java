@@ -39,9 +39,11 @@ public final class AddressableDuplexBusSystem
 	private static final ReadWriteLock m_busNameLock = new ReentrantReadWriteLock(true);
 	private static final CharSequenceTrie<AddressableDuplexBus> m_busByName = new CharSequenceTrie<>();
 	private static final AtomicInteger m_numConnectedReaders = new AtomicInteger();
+	private static final AtomicInteger m_numConnectedSubmitters = new AtomicInteger();
 	
 	private static final ReadWriteLock m_shutdownLock = new ReentrantReadWriteLock(true);
 	private static Promise<Void> m_shutdownPromise;
+	private static boolean m_shuttingDown = false;
 	
 	private AddressableDuplexBusSystem() {
 	}
@@ -63,17 +65,7 @@ public final class AddressableDuplexBusSystem
 			try(INeuronStateLock lock = currentNeuronRef.lockState()) {
 				NeuronSystemTLS.validateInNeuronConnectResources(lock);
 				
-				AddressableDuplexBus bus;
-				m_busNameLock.writeLock().lock();
-				try {
-					bus = m_busByName.get(busName);
-					if (bus == null) {
-						LOG.info("Creating addressable duplex bus: {}", busName);
-						m_busByName.addOrFetch(busName, bus = new AddressableDuplexBus(busName));
-					}
-				} finally {
-					m_busNameLock.writeLock().unlock();
-				}
+				final AddressableDuplexBus bus = getOrCreateBus(busName);
 				bus.createAddress(addressPattern, currentNeuronRef, listenerConfig, listen);
 			}
 		} finally {
@@ -98,17 +90,7 @@ public final class AddressableDuplexBusSystem
 			try(INeuronStateLock lock = currentNeuronRef.lockState()) {
 				NeuronSystemTLS.validateInNeuronConnectResources(lock);
 				
-				AddressableDuplexBus bus;
-				m_busNameLock.writeLock().lock();
-				try {
-					bus = m_busByName.get(busName);
-					if (bus == null) {
-						LOG.info("Creating addressable duplex bus: {}", busName);
-						m_busByName.addOrFetch(busName, bus = new AddressableDuplexBus(busName));
-					}
-				} finally {
-					m_busNameLock.writeLock().unlock();
-				}
+				final AddressableDuplexBus bus = getOrCreateBus(busName);
 				bus.createAddress(address, currentNeuronRef, listenerConfig, listen);
 			}
 		} finally {
@@ -116,11 +98,10 @@ public final class AddressableDuplexBusSystem
 		}
 	}
 	
-
 	private static void startAddReader() {
 		m_shutdownLock.readLock().lock();
 		try {
-			if (m_shutdownPromise != null) {
+			if (m_shuttingDown) {
 				throw new SystemShutdownException();
 			}
 			m_numConnectedReaders.incrementAndGet();
@@ -130,14 +111,18 @@ public final class AddressableDuplexBusSystem
 	}
 	
 	private static void endAddReader() {
+		readerDisconnected();
+	}
+	
+	private static void readerDisconnected() {
 		if (m_numConnectedReaders.decrementAndGet() == 0) {
-			m_shutdownLock.readLock().lock();
+			m_shutdownLock.writeLock().lock();
 			try {
-				if (m_shutdownPromise != null) {
+				if (m_shuttingDown && m_numConnectedSubmitters.get()==0) {
 					m_shutdownPromise.setSuccess((Void)null);
 				}
 			} finally {
-				m_shutdownLock.readLock().unlock();
+				m_shutdownLock.writeLock().unlock();
 			}
 		}
 	}
@@ -166,34 +151,69 @@ public final class AddressableDuplexBusSystem
 			if (!lock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online, NeuronState.GoingOffline)) {
 				return false;
 			}
-			AddressableDuplexBus bus;
-			boolean unlockRead = true;
-			m_busNameLock.readLock().lock();
+			startAddSubmitter();
 			try {
-				bus = m_busByName.get(busName);
-				if (bus == null) {
-					// A read lock cannot upgrade to a write lock, so we release the read and acquire the write
-					m_busNameLock.readLock().unlock();
-					m_busNameLock.writeLock().lock();
-					try {
-						unlockRead = false;
-						bus = m_busByName.get(busName);
-						if (bus == null) {
-							LOG.info("Creating addressable duplex bus: {}", busName);
-							m_busByName.addOrFetch(busName, bus = new AddressableDuplexBus(busName));
-						}
-					} finally {
-						m_busNameLock.writeLock().unlock();
-					}
+				final AddressableDuplexBus bus = getOrCreateBus(busName);
+				final boolean autoCreateAddress = config.getBoolean(submitConfig_autoCreateAddress);
+				return bus.tryEnqueue(address, msg, listener, autoCreateAddress);
+			} finally {
+				endAddSubmitter();
+			}
+		}
+	}
+	
+	private static void startAddSubmitter() {
+		m_shutdownLock.readLock().lock();
+		try {
+			if (m_shuttingDown) {
+				throw new SystemShutdownException();
+			}
+			m_numConnectedSubmitters.incrementAndGet();
+		} finally {
+			m_shutdownLock.readLock().unlock();
+		}
+	}
+	
+	private static void endAddSubmitter() {
+		if (m_numConnectedSubmitters.decrementAndGet() == 0) {
+			m_shutdownLock.writeLock().lock();
+			try {
+				if (m_shuttingDown && m_numConnectedReaders.get()==0) {
+					m_shutdownPromise.setSuccess((Void)null);
 				}
 			} finally {
-				if (unlockRead) {
-					m_busNameLock.readLock().unlock();
+				m_shutdownLock.writeLock().unlock();
+			}
+		}
+	}
+
+	private static AddressableDuplexBus getOrCreateBus(String busName) {
+		AddressableDuplexBus bus;
+		boolean unlockRead = true;
+		m_busNameLock.readLock().lock();
+		try {
+			bus = m_busByName.get(busName);
+			if (bus == null) {
+				// A read lock cannot upgrade to a write lock, so we release the read and acquire the write
+				m_busNameLock.readLock().unlock();
+				m_busNameLock.writeLock().lock();
+				try {
+					unlockRead = false;
+					bus = m_busByName.get(busName);
+					if (bus == null) {
+						LOG.info("Creating addressable duplex bus: {}", busName);
+						m_busByName.addOrFetch(busName, bus = new AddressableDuplexBus(busName));
+					}
+				} finally {
+					m_busNameLock.writeLock().unlock();
 				}
 			}
-			final boolean autoCreateAddress = config.getBoolean(submitConfig_autoCreateAddress);
-			return bus.tryEnqueue(address, msg, listener, autoCreateAddress);
+		} finally {
+			if (unlockRead) {
+				m_busNameLock.readLock().unlock();
+			}
 		}
+		return bus;
 	}
 	
 	interface IMessageReader {
@@ -397,6 +417,16 @@ public final class AddressableDuplexBusSystem
 			m_busName = busName;
 		}
 		
+		void close() {
+			m_address.forEach((addr, broker) -> {
+				broker.close();
+				return true;
+			});
+			for(ReaderBroker broker : m_addressPatterns) {
+				broker.close();
+			}
+		}
+		
 		public boolean tryEnqueue(String address, ReferenceCounted msg, IDuplexBusSubmissionListener listener, boolean autoCreateBroker) {
 			ReaderBroker broker;
 			m_addressLock.readLock().lock();
@@ -540,6 +570,14 @@ public final class AddressableDuplexBusSystem
 			}
 		}
 		
+		void close() {
+			m_queue.forEach(cw -> {
+				cw.setAsUndelivered();
+				return true;
+			});
+			m_queue.clear();
+		}
+		
 		synchronized void setNewReader(ObjectConfig config, IMessageReader reader) {
 			if (m_reader != null) {
 				final UnsupportedOperationException ex = new UnsupportedOperationException("Attempted to add a second reader for bus '" + m_busName + "' address '" + m_address + "' which is currently listened to by neuron " + m_reader.owner().logString() + ". A bus address can only have a single reader.");
@@ -575,17 +613,8 @@ public final class AddressableDuplexBusSystem
 				
 				lock.addStateListener(NeuronState.Disconnecting, (ignoreThis) -> {
 					closeReader();
+					readerDisconnected();
 					NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from bus '{}' address '{}'", m_busName, m_address);
-					if (m_numConnectedReaders.decrementAndGet() == 0) {
-						m_shutdownLock.readLock().lock();
-						try {
-							if (m_shutdownPromise != null) {
-								m_shutdownPromise.setSuccess((Void)null);
-							}
-						} finally {
-							m_shutdownLock.readLock().unlock();
-						}
-					}
 					// TODO Do we need to remove this address from the Bus!?!?!?!? <<<<------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 				});
 			}
@@ -704,7 +733,7 @@ public final class AddressableDuplexBusSystem
 					m_wrapped.setAsProcessed(responseMsg);
 					m_wrapped = null;
 					if (m_reader != null) {
-						// We have to notify the reader that there are now available in-process slots
+						// We have to notify the reader that there might now be items to dequeue
 						if (LOG.isTraceEnabled()) {
 							LOG.trace("Bus {} address {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_busName, m_address);
 						}
@@ -723,7 +752,7 @@ public final class AddressableDuplexBusSystem
 					m_wrapped.setAsFailed(t);
 					m_wrapped = null;
 					if (m_reader != null) {
-						// We have to notify the reader that there are now available in-process slots
+						// We have to notify the reader that there might now be items to dequeue
 						if (LOG.isTraceEnabled()) {
 							LOG.trace("Bus {} address {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_busName, m_address);
 						}
@@ -759,17 +788,37 @@ public final class AddressableDuplexBusSystem
 
 		@Override
 		public Future<Void> startShutdown() {
-			// TODO Need to shut down brokers and mark queued messages as undelivered <<<------------------------------------------------------------------------------------------------------------------------------------
+			final boolean noActive;
 			m_shutdownLock.writeLock().lock();
 			try {
-				m_shutdownPromise = NeuronApplication.newPromise();
-				if (m_numConnectedReaders.get() == 0) {
-					m_shutdownPromise.trySuccess((Void)null);
+				m_shuttingDown = true;
+				if (m_numConnectedReaders.get()==0 && m_numConnectedSubmitters.get()==0) {
+					noActive = true;
+				} else {
+					m_shutdownPromise = NeuronApplication.newPromise();
+					noActive = false;
 				}
 			} finally {
 				m_shutdownLock.writeLock().unlock();
 			}
-			return m_shutdownPromise;
+			if (noActive) {
+				closeBusses();
+				return NeuronApplication.newSucceededFuture((Void)null);
+			}
+			final Promise<Void> shutdownCompletePromise = NeuronApplication.newPromise();
+			m_shutdownPromise.addListener((f) -> {
+				closeBusses();
+				shutdownCompletePromise.trySuccess((Void)null);
+			});
+			return shutdownCompletePromise;
+		}
+		
+		private void closeBusses() {
+			m_busByName.forEach((name, bus) -> {
+				bus.close();
+				return true;
+			});
+			m_busByName.clear();
 		}
 		
 	}

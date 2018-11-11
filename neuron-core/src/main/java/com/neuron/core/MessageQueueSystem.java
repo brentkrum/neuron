@@ -4,6 +4,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock;
 
+import org.apache.logging.log4j.Level;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
@@ -11,9 +12,11 @@ import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.utility.CharSequenceTrie;
+import com.neuron.utility.FastLinkedList;
 
 import io.netty.util.ReferenceCounted;
 import io.netty.util.concurrent.Future;
+import io.netty.util.concurrent.Promise;
 import io.netty.util.internal.PlatformDependent;
 
 public final class MessageQueueSystem
@@ -25,6 +28,12 @@ public final class MessageQueueSystem
 	private static final int DEFAULT_QUEUE_MSG_COUNT = Config.getFWInt("core.MessageQueueSystem.defaultMaxQueueMsgCount", Integer.valueOf(1024));
 	private static final ReadWriteLock m_brokerLock = new ReentrantReadWriteLock(true);
 	private static final CharSequenceTrie<CreatedQueueBroker> m_queueBrokerByName = new CharSequenceTrie<>();
+
+	private static final AtomicInteger m_numConnectedReaders = new AtomicInteger();
+	private static final AtomicInteger m_numConnectedSubmitters = new AtomicInteger();
+	private static final ReadWriteLock m_shutdownLock = new ReentrantReadWriteLock(true);
+	private static Promise<Void> m_shutdownPromise;
+	private static boolean m_shuttingDown = false;
 
 	private MessageQueueSystem() {
 	}
@@ -45,6 +54,7 @@ public final class MessageQueueSystem
 		try(INeuronStateLock lock = currentNeuronRef.lockState()) {
 			NeuronSystemTLS.validateInNeuronConnectResources(lock);
 			
+			startAddReader();
 			m_brokerLock.writeLock().lock();
 			try {
 				CreatedQueueBroker broker = m_queueBrokerByName.get(fqqn);
@@ -55,6 +65,7 @@ public final class MessageQueueSystem
 	
 			} finally {
 				m_brokerLock.writeLock().unlock();
+				endAddReader();
 			}
 		}
 		
@@ -68,6 +79,7 @@ public final class MessageQueueSystem
 		try(INeuronStateLock lock = currentNeuronRef.lockState()) {
 			NeuronSystemTLS.validateInNeuronConnectResources(lock);
 			
+			startAddReader();
 			m_brokerLock.writeLock().lock();
 			try {
 				CreatedQueueBroker broker = m_queueBrokerByName.get(fqqn);
@@ -78,9 +90,39 @@ public final class MessageQueueSystem
 	
 			} finally {
 				m_brokerLock.writeLock().unlock();
+				endAddReader();
 			}
 		}
 		
+	}
+	
+	private static void startAddReader() {
+		m_shutdownLock.readLock().lock();
+		try {
+			if (m_shuttingDown) {
+				throw new SystemShutdownException();
+			}
+			m_numConnectedReaders.incrementAndGet();
+		} finally {
+			m_shutdownLock.readLock().unlock();
+		}
+	}
+	
+	private static void endAddReader() {
+		readerDisconnected();
+	}
+	
+	private static void readerDisconnected() {
+		if (m_numConnectedReaders.decrementAndGet() == 0) {
+			m_shutdownLock.writeLock().lock();
+			try {
+				if (m_shuttingDown && m_numConnectedSubmitters.get()==0) {
+					m_shutdownPromise.setSuccess((Void)null);
+				}
+			} finally {
+				m_shutdownLock.writeLock().unlock();
+			}
+		}
 	}
 	
 
@@ -122,18 +164,57 @@ public final class MessageQueueSystem
 		// TODO If system is shutting down, need to prevent queue creation <<<<<<----------------------------------------------------------------
 		
 		NeuronSystemTLS.validateNeuronAwareThread();
-		m_brokerLock.writeLock().lock();
+		startAddSubmitter();
+		m_brokerLock.readLock().lock();
 		try {
 			CreatedQueueBroker broker = m_queueBrokerByName.get(fqqn);
 			if (broker == null) {
-				m_queueBrokerByName.addOrReplace(fqqn, broker = new CreatedQueueBroker(fqqn));
-				broker.initForWrite();
+				m_brokerLock.readLock().unlock();
+				m_brokerLock.writeLock().lock();
+				try {
+					// Need to re-grab the read lock so we can release it after enqueue
+					m_brokerLock.readLock().lock();
+					// Need to re-check now that we have the write lock
+					broker = m_queueBrokerByName.get(fqqn);
+					if (broker == null) {
+						m_queueBrokerByName.addOrReplace(fqqn, broker = new CreatedQueueBroker(fqqn));
+						broker.initForWrite();
+					}
+				} finally {
+					m_brokerLock.writeLock().unlock();
+				}
 			}
 			return broker.tryEnqueue(msg, listener);
 		} finally {
-			m_brokerLock.writeLock().unlock();
+			m_brokerLock.readLock().unlock();
+			endAddSubmitter();
 		}
 		
+	}
+	
+	private static void startAddSubmitter() {
+		m_shutdownLock.readLock().lock();
+		try {
+			if (m_shuttingDown) {
+				throw new SystemShutdownException();
+			}
+			m_numConnectedSubmitters.incrementAndGet();
+		} finally {
+			m_shutdownLock.readLock().unlock();
+		}
+	}
+	
+	private static void endAddSubmitter() {
+		if (m_numConnectedSubmitters.decrementAndGet() == 0) {
+			m_shutdownLock.writeLock().lock();
+			try {
+				if (m_shuttingDown && m_numConnectedReaders.get()==0) {
+					m_shutdownPromise.setSuccess((Void)null);
+				}
+			} finally {
+				m_shutdownLock.writeLock().unlock();
+			}
+		}
 	}
 	
 	interface IMessageReader {
@@ -143,7 +224,7 @@ public final class MessageQueueSystem
 		void close();
 	}
 
-	private static final class MessageWrapper implements IMessageQueueSubmission {
+	private static final class MessageWrapper extends FastLinkedList.LLNode<MessageWrapper> implements IMessageQueueSubmission {
 		private static final AtomicInteger m_nextId = new AtomicInteger();
 		private final int m_messageId = m_nextId.incrementAndGet();
 		private final Worker m_worker = new Worker();
@@ -169,6 +250,11 @@ public final class MessageQueueSystem
 			m_listener = listener;
 		}
 		
+		@Override
+		protected MessageWrapper getObject() {
+			return this;
+		}
+
 		void reset() {
 			m_wasReceived = false;
 			m_notifiedReceived = false;
@@ -317,22 +403,26 @@ public final class MessageQueueSystem
 	}
 	
 	static final class CreatedQueueBroker extends QueueBroker {
-		private MessageWrapper[] m_queue;
+		private final FastLinkedList<MessageWrapper> m_queue = new FastLinkedList<>();
+		private int m_maxMsgCount;
 		private IMessageReader m_reader;
 		private CheckoutWrapper m_currentCheckout;
-		private int m_head; // Add to Head
-		private int m_tail; // Remove from tail
-		private boolean m_full;
-		private int m_count;
 		
 		private CreatedQueueBroker(String queueName) {
 			super(queueName);
 		}
 		
+		void close() {
+			m_queue.forEach(mw -> {
+				mw.setAsUndelivered();
+				return true;
+			});
+			m_queue.clear();
+		}
+		
 		synchronized void initForWrite() {
-			m_queue = new MessageWrapper[DEFAULT_QUEUE_MSG_COUNT];
 			if (LOG.isDebugEnabled()) {
-				LOG.debug("Queue {} - writer initializing", m_queueName);
+				LOG.debug("Queue {} - writer initializing queue", m_queueName);
 			}
 		}
 		
@@ -343,34 +433,16 @@ public final class MessageQueueSystem
 				PlatformDependent.throwException(ex);
 				return;
 			}
-			if (LOG.isDebugEnabled()) {
-				LOG.debug("Queue {} - reader attaching", m_queueName);
-			}
 			m_reader = reader;
-			final int newMsgCountMax = config.getInteger(MessageQueueSystem.queueBrokerConfig_MaxMsgCount, DEFAULT_QUEUE_MSG_COUNT);
-			if (m_queue == null) {
-				m_queue = new MessageWrapper[newMsgCountMax];
-			} else {
-				if (newMsgCountMax > m_queue.length) {
-					// Expand queue
-					m_queue = copyQueue0(newMsgCountMax);
-					m_full = (m_count == newMsgCountMax);
-					
-				} else if (newMsgCountMax < m_queue.length) {
-					// Shrink queue
-					while(m_count > newMsgCountMax) {
-						final MessageWrapper mw = dequeue0();
-						mw.setAsUndelivered();
-					}
-					m_queue = copyQueue0(newMsgCountMax);
-					m_full = (m_count == newMsgCountMax);
-				}
-			}
+			m_numConnectedReaders.incrementAndGet();
+			NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Reader connected to queue '{}'", m_queueName);
+			
+			m_maxMsgCount = config.getInteger(MessageQueueSystem.queueBrokerConfig_MaxMsgCount, DEFAULT_QUEUE_MSG_COUNT);
 			final IMessageReader r = m_reader;
 			try(INeuronStateLock lock = m_reader.owner().lockState()) {
 				lock.addStateListener(NeuronState.SystemOnline, (ignoreParam) -> {
 					synchronized(CreatedQueueBroker.this) {
-						if (m_count > 0) {
+						if (m_queue.count() > 0) {
 							if (LOG.isTraceEnabled()) {
 								LOG.trace("Queue {} sending DataReady event to reader", m_queueName);
 							}
@@ -384,38 +456,11 @@ public final class MessageQueueSystem
 				});
 				
 				lock.addStateListener(NeuronState.Disconnecting, (ignoreThis) -> {
-					if (LOG.isDebugEnabled()) {
-						LOG.debug("Reader Neuron disconnecting");
-					}
 					closeReader();
-					// TODO If system is shutting down, need to mark all messages as undelivered <<<<<<----------------------------------------------------------------
+					readerDisconnected();
+					NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from queue '{}'", m_queueName);
 				});
 			}
-		}
-		
-		private MessageWrapper[] copyQueue0(int newMsgCountMax) {
-			final MessageWrapper newQ[] = new MessageWrapper[newMsgCountMax];
-			
-			if (m_tail >= m_head) {
-				// There are some at the top and maybe some at the bottom:  XXX____XXX or ____XXX
-				// It could also be full: HHHHHHTTT 
-				if (m_head != 0) {
-					// If head is zero, there are no entries in the start of the array: TTTTTTTT or ____TTT
-					System.arraycopy(m_queue, 0, newQ, 0, m_head);
-				}
-				int tailLen = m_queue.length - m_tail;
-				int newTail = newQ.length - tailLen;
-				System.arraycopy(m_queue, m_tail, newQ, newTail, tailLen);
-				m_tail = newTail;
-				
-			} else { // if (m_tail < m_head) {
-				// The queue is just a set of items:  ___XXXXXX___
-				System.arraycopy(m_queue, 0, newQ, 0, m_head);
-				int tailLen = m_queue.length - m_tail;
-				System.arraycopy(m_queue, m_tail, newQ, newQ.length-tailLen, tailLen);
-				
-			}
-			return newQ;
 		}
 		
 		synchronized void closeReader() {
@@ -425,50 +470,6 @@ public final class MessageQueueSystem
 			}
 			m_reader.close();
 			m_reader = null;
-//			// Clear the queue
-//			for(int i=0; i<m_count; i++) {
-//				m_queue[m_tail].setAsUndelivered();
-//				m_queue[m_tail++] = null;
-//				if (m_tail == m_queue.length) {
-//					m_tail = 0;
-//				}
-//			}
-//			m_head = 0;
-//			m_tail = 0;
-//			m_full = false;
-//			m_count = 0;
-		}
-		
-		private void enqueue0(MessageWrapper msg) {
-			m_queue[m_head++] = msg;
-			if (m_head == m_queue.length) {
-				m_head = 0;
-			}
-			m_count++;
-			if (m_count == m_queue.length) {
-				m_full = true;
-			}
-		}
-		
-		private MessageWrapper dequeue0() {
-			if (m_count == 0) {
-				return null;
-			}
-			final MessageWrapper msgW = m_queue[m_tail];
-			m_queue[m_tail++] = null; // Remove it so it can be garbage collected
-			if (m_tail == m_queue.length) {
-				m_tail = 0;
-			}
-			m_full = false;
-			m_count--;
-			return msgW;
-		}
-		
-		private MessageWrapper peek0() {
-			if (m_count == 0) {
-				return null;
-			}
-			return m_queue[m_tail];
 		}
 		
 		@Override
@@ -479,9 +480,9 @@ public final class MessageQueueSystem
 				return null;
 			}
 			if (m_currentCheckout != null) {
-				return null;
+				throw new IllegalStateException("This should not happen");
 			}
-			final MessageWrapper msg = dequeue0();
+			final MessageWrapper msg = m_queue.removeFirst();
 			if (msg != null) {
 				msg.setAsReceived();
 			}
@@ -498,31 +499,29 @@ public final class MessageQueueSystem
 			if (m_currentCheckout != null) {
 				throw new IllegalStateException("This should not happen");
 			}
-			final MessageWrapper peekedMsg = peek0();
-			if (peekedMsg == null) {
+			final MessageWrapper msg = m_queue.removeFirst();
+			if (msg == null) {
 				return null;
 			}
-			return m_currentCheckout = new CheckoutWrapper(peekedMsg);
+			return m_currentCheckout = new CheckoutWrapper(msg);
 		}
 		
 		@Override
 		synchronized boolean tryEnqueue(ReferenceCounted msg, IMessageQueueSubmissionListener listener) {
-			if (m_full) {
+			if (m_queue.count() >= m_maxMsgCount) {
 				return false;
 			}
 			// TODO If system is shutting down, reject messages <<<<<<----------------------------------------------------------------
 			
 			final MessageWrapper mw = new MessageWrapper(msg, NeuronSystemTLS.currentNeuron(), listener);
-			if (m_count == 0) {
-				enqueue0(mw);
+			m_queue.addLast(mw);
+			if (m_queue.count() == 1) {
 				if (m_reader != null) {
 					if (LOG.isTraceEnabled()) {
 						LOG.trace("Queue {} tryWrite() sending DataReady event to reader", m_queueName);
 					}
 					m_reader.onEvent(IMessageReader.Event.DataReady);
 				}
-			} else {
-				enqueue0(mw);
 			}
 			return true;
 		}
@@ -537,8 +536,14 @@ public final class MessageQueueSystem
 			}
 			
 			private void close0() {
-				m_wrapped.reset();
-				m_wrapped = null;
+				if (m_wrapped != null) {
+					if (LOG.isTraceEnabled()) {
+						LOG.trace("Queue {} moving incomplete message back to queue", m_queueName);
+					}
+					m_wrapped.reset();
+					m_queue.addFirst(m_wrapped);
+					m_wrapped = null;
+				}
 			}
 			
 			@Override
@@ -568,11 +573,6 @@ public final class MessageQueueSystem
 			public void setAsProcessed() {
 				synchronized(CreatedQueueBroker.this) {
 					if (m_wrapped != null) {
-						if (peek0() != m_wrapped) {
-							LOG.fatal("peek0() != m_wrapped.  This should not be possible");
-							NeuronApplication.fatalExit();
-						}
-						dequeue0();
 						m_wrapped.setAsProcessed();
 						m_wrapped = null;
 						m_currentCheckout = null;
@@ -610,8 +610,37 @@ public final class MessageQueueSystem
 
 		@Override
 		public Future<Void> startShutdown() {
-			// TODO Need to shut down brokers and mark queued messages as undelivered <<<------------------------------------------------------------------------------------------------------------------------------------
-			return INeuronApplicationSystem.super.startShutdown();
+			final boolean noActive;
+			m_shutdownLock.writeLock().lock();
+			try {
+				m_shuttingDown = true;
+				if (m_numConnectedReaders.get()==0 && m_numConnectedSubmitters.get()==0) {
+					noActive = true;
+				} else {
+					m_shutdownPromise = NeuronApplication.newPromise();
+					noActive = false;
+				}
+			} finally {
+				m_shutdownLock.writeLock().unlock();
+			}
+			if (noActive) {
+				closeQueues();
+				return NeuronApplication.newSucceededFuture((Void)null);
+			}
+			final Promise<Void> shutdownCompletePromise = NeuronApplication.newPromise();
+			m_shutdownPromise.addListener((f) -> {
+				closeQueues();
+				shutdownCompletePromise.trySuccess((Void)null);
+			});
+			return shutdownCompletePromise;
+		}
+		
+		private void closeQueues() {
+			m_queueBrokerByName.forEach((name, q) -> {
+				q.close();
+				return true;
+			});
+			m_queueBrokerByName.clear();
 		}
 		
 	}

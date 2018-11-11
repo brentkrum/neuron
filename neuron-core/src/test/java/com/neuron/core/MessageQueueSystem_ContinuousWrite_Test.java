@@ -26,7 +26,7 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 	@BeforeAll
 	public static void init() {
 //		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
-		System.setProperty("logger.com.neuron.core.MessageQueueSystem", "TRACE");
+//		System.setProperty("logger.com.neuron.core.MessageQueueSystem", "TRACE");
 //		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
 		
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
@@ -161,7 +161,7 @@ public class MessageQueueSystem_ContinuousWrite_Test {
  
 				@Override
 				public void onUndelivered(ReferenceCounted msg) {
-					LOG.fatal("Undelivered: {}", ((TestMessage)msg).m_data);
+					LOG.info("Undelivered: {}", ((TestMessage)msg).m_data);
 					m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
 				}
 

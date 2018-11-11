@@ -131,6 +131,10 @@ public final class NeuronApplication {
 		return m_taskPool.next().<T>newPromise();
 	}
 	
+	public static <T> Future<T> newSucceededFuture(T result) {
+		return m_taskPool.next().newSucceededFuture(result);
+	}
+	
    public static ScheduledFuture<?> scheduleForCurrentTemplate(Runnable command, long delay, TimeUnit unit) {
    	NeuronSystemTLS.validateTemplateAwareThread();
    	final TemplateRef ref = NeuronSystemTLS.currentTemplate();
@@ -351,13 +355,11 @@ public final class NeuronApplication {
 		}
 
 		LOG.info("Start of shutdown hook");
-		// TODO SHUT DOWN NEURONS/TEMPLATES!!
-		// TODO How do we shut down Neurons!?!? <<<<------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 		final int numAppSystems = m_appSystems.size();
 		for(int i=numAppSystems-1; i>=0; i--) {
 			final NeuronApplicationSystemRegistrant r = m_appSystems.get(i);
 			if (LOG.isDebugEnabled()) {
-				LOG.debug("Shutting down {}", r.m_registrant.systemName());
+				LOG.debug("Start shutdown of {}", r.m_registrant.systemName());
 			}
 			try {
 				r.startShutdown();
@@ -368,7 +370,17 @@ public final class NeuronApplication {
 				LOG.error("Unsuccessful shutdown of registrant {}", r.m_registrant.toString());
 			}
 		}
-		
+
+		for(int i=numAppSystems-1; i>=0; i--) {
+			final NeuronApplicationSystemRegistrant r = m_appSystems.get(i);
+			if (LOG.isDebugEnabled()) {
+				LOG.debug("Waiting for shutdown of {}", r.m_registrant.systemName());
+			}
+			if (!r.waitForSuccessfulShutdown()) {
+				LOG.error("Unsuccessful shutdown of registrant {}", r.m_registrant.toString());
+			}
+		}
+
 		// Shut down thread pools
 		LOG.debug("Waiting for io pool shutdown");
 		m_ioPool.shutdownGracefully(SHUTDOWN_QUIET_PERIOD, SHUTDOWN_MAX_WAIT, TimeUnit.MILLISECONDS).awaitUninterruptibly();
