@@ -11,7 +11,7 @@ public interface IMessageQueueSubmission {
 	int id();
 	void setAsReceived();
 	void setAsStartedProcessing();
-	void setAsProcessed();
+	void setAsProcessed(ReferenceCounted response);
 	/**
 	 * This can return null under certain edge cases when a Neuron is disconnecting.
 	 */

@@ -3,12 +3,12 @@ package com.neuron.core;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.neuron.core.MessageQueueSystem.QueueBroker;
+import com.neuron.core.MessageQueueSystemBase.QueueBroker;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 
-class MessageQueueReader implements MessageQueueSystem.IMessageReader
+class MessageQueueReader implements MessageQueueSystemBase.IMessageReader
 {
 	private static final Logger LOG = LogManager.getLogger(MessageQueueReader.class);
 	
@@ -70,11 +70,11 @@ class MessageQueueReader implements MessageQueueSystem.IMessageReader
 				}
 				submission.setAsStartedProcessing();
 				try {
-					m_callback.onData(submission.message());
+					submission.setAsProcessed( m_callback.onData(submission.message()) );
 				} catch(Throwable t) {
-					NeuronApplication.logError(LOG, "Unhandled exception in user provided callback", t);
+					NeuronApplication.logError(LOG, "Unhandled exception in user provided callback, returning null response message", t);
+					submission.setAsProcessed(null);
 				}
-				submission.setAsProcessed();
 				requestMoreWork();
 				
 			} catch(Exception ex) {

@@ -26,7 +26,7 @@ public class AddressableDuplexBus_StartupsShutdowns_Test {
 	public static void init() {
 		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
 		System.setProperty("logger.com.neuron.core.AddressableDuplexBusSystem", "DEBUG");
-//		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
+		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
 		
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
 	}

@@ -32,7 +32,7 @@ import io.netty.util.internal.PlatformDependent;
 public final class NeuronApplication {
 	private static final Logger LOG = LogManager.getLogger(NeuronApplication.class);
 	private static final long SHUTDOWN_QUIET_PERIOD = Config.getFWInt("core.NeuronApplication.shutdownQuietPeriod", 0);
-	private static final long SHUTDOWN_MAX_WAIT = Config.getFWInt("core.NeuronApplication.shutdownMaxWait", 0);
+	private static final long SHUTDOWN_MAX_WAIT = Config.getFWInt("core.NeuronApplication.shutdownMaxWait", 15000);
 	
 	private static final ArrayList<NeuronApplicationSystemRegistrant> m_appSystems = new ArrayList<>();
 	private static final PooledByteBufAllocator m_ioBufferPool = PooledByteBufAllocator.DEFAULT;
@@ -79,7 +79,7 @@ public final class NeuronApplication {
 		// Resources
 		BytePipeSystem.register();
 		MessagePipeSystem.register();
-		MessageQueueSystem.register();
+		SimplexMessageQueueSystem.register();
 		AddressableDuplexBusSystem.register();
 		
 		// Neurons

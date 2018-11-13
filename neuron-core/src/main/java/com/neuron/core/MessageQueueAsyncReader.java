@@ -3,12 +3,12 @@ package com.neuron.core;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 
-import com.neuron.core.MessageQueueSystem.QueueBroker;
+import com.neuron.core.MessageQueueSystemBase.QueueBroker;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 
-class MessageQueueAsyncReader implements MessageQueueSystem.IMessageReader
+class MessageQueueAsyncReader implements MessageQueueSystemBase.IMessageReader
 {
 	private static final Logger LOG = LogManager.getLogger(MessageQueueAsyncReader.class);
 	

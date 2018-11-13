@@ -16,15 +16,6 @@ import io.netty.util.ReferenceCounted;
  * @author brentk
  *
  */
-public interface IMessageQueueSubmissionListener {
-	/**
-	 * The message is passed back, giving you a chance to do whatever you need with it.
-	 * If you wish to keep it, you must call retain()
-	 * 
-	 * @param msg
-	 */
-	void onReceived(ReferenceCounted msg);
-	void onStartProcessing(ReferenceCounted msg);
-	
-	void onUndelivered(ReferenceCounted msg);
+public interface ISimplexMessageQueueSubmissionListener extends IMessageQueueSubmissionListener {
+	void onProcessed(ReferenceCounted msg);
 }

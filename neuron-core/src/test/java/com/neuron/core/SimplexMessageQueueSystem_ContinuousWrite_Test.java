@@ -20,14 +20,18 @@ import com.neuron.core.test.TemplateStateTestUtils;
 
 import io.netty.util.AbstractReferenceCounted;
 import io.netty.util.ReferenceCounted;
+import io.netty.util.ResourceLeakDetector;
+import io.netty.util.ResourceLeakDetectorFactory;
+import io.netty.util.ResourceLeakTracker;
 import io.netty.util.concurrent.Promise;
 
-public class MessageQueueSystem_ContinuousWrite_Test {
+public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 	@BeforeAll
 	public static void init() {
 //		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
 //		System.setProperty("logger.com.neuron.core.MessageQueueSystem", "TRACE");
-//		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
+		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
+		System.setProperty("io.netty.leakDetection.level", "PARANOID");
 		
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
 	}
@@ -57,14 +61,14 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 		INeuronManagement nMgtB = NeuronStateSystem.registerNeuron("RWTestTemplateB", "NeuronB");
 
 		for(int i=0; i<100; i++) {
-			LogManager.getLogger(MessageQueueSystem_ContinuousWrite_Test.class).info("Bring Template B online");
+			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Bring Template B online");
 			assertTrue(TemplateStateTestUtils.bringTemplateOnline(tMgtB).syncUninterruptibly().isSuccess());
 			
-			LogManager.getLogger(MessageQueueSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
+			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
 			assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config().build()));
 			assertTrue(createFutureForState(nMgtB.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron B to enter Online state");
 			
-			LogManager.getLogger(MessageQueueSystem_ContinuousWrite_Test.class).info("Running test - {}", i);
+			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Running test - {}", i);
 			// Let the test run for 25ms
 			m_testFuture.awaitUninterruptibly(25);
 			if (m_testFuture.isDone() && !m_testFuture.isSuccess()) {
@@ -72,10 +76,10 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 			}
 	
 			// Take template B offline (hence neuron B too)
-			LogManager.getLogger(MessageQueueSystem_ContinuousWrite_Test.class).info("Take template B offline");
+			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Take template B offline");
 			TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
 			
-			LogManager.getLogger(MessageQueueSystem_ContinuousWrite_Test.class).info("Done reading {} expected={}", i, m_expected);
+			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Done reading {} expected={}", i, m_expected);
 		}
 		
 		// Take template A offline (hence neuron A too)
@@ -110,7 +114,7 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 			@Override
 			public void connectResources() {
 				m_worker = new ConstantWriter();
-				m_fqqn = MessageQueueSystem.createFQQN("NeuronB", "A->B");
+				m_fqqn = SimplexMessageQueueSystem.createFQQN("NeuronB", "A->B");
 			}
 
 			@Override
@@ -139,7 +143,7 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 							if (m_cur == null) {
 								m_cur = new TestMessage(m_toWrite);
 							}
-							if (MessageQueueSystem.submitToQueue(m_fqqn, m_cur, m_listener)) {
+							if (SimplexMessageQueueSystem.submitToQueue(m_fqqn, m_cur, m_listener)) {
 //								LOG.info("<<<<<<< Submitted {}", m_cur.m_data);
 								m_toWrite++;
 								m_cur = null;
@@ -157,27 +161,31 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 				
 			}
 			
-			private static final class QueueListener implements IMessageQueueSubmissionListener {
+			private static final class QueueListener implements ISimplexMessageQueueSubmissionListener {
  
 				@Override
 				public void onUndelivered(ReferenceCounted msg) {
 					LOG.info("Undelivered: {}", ((TestMessage)msg).m_data);
 					m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
+					msg.touch();
 				}
 
 				@Override
 				public void onReceived(ReferenceCounted msg) {
 //					LOG.info("Received: {}", ((TestMessage)msg).m_data);
+					msg.touch();
 				}
 
 				@Override
 				public void onStartProcessing(ReferenceCounted msg) {
 //					LOG.info("Started: {}", ((TestMessage)msg).m_data);
+					msg.touch();
 				}
 
 				@Override
 				public void onProcessed(ReferenceCounted msg) {
 //					LOG.info("Processed: {}", ((TestMessage)msg).m_data);
+					msg.touch();
 				}
 				
 			}
@@ -205,7 +213,7 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 			
 			@Override
 			public void connectResources() {
-				MessageQueueSystem.defineQueue("A->B", ObjectConfigBuilder.config().build(), (ReferenceCounted qMsg) -> {
+				SimplexMessageQueueSystem.defineQueue("A->B", ObjectConfigBuilder.config().build(), (ReferenceCounted qMsg) -> {
 					long cur = ((TestMessage)qMsg).m_data;
 //					LOG.info(">>>>>>>> Read {}", cur);
 					if (cur != m_expected) {
@@ -213,6 +221,7 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 					} else {
 						m_expected++;
 					}
+					qMsg.release();
 				});
 			}
 
@@ -225,19 +234,28 @@ public class MessageQueueSystem_ContinuousWrite_Test {
 	}
 	
 	private static final class TestMessage extends AbstractReferenceCounted {
+		private static final ResourceLeakDetector<TestMessage> LEAK_DETECT = ResourceLeakDetectorFactory.instance().newResourceLeakDetector(TestMessage.class);
 		private final long m_data;
+		private final ResourceLeakTracker<TestMessage> m_tracker;
 		
 		TestMessage(long data) {
 			m_data = data;
+			m_tracker = LEAK_DETECT.track(this);
 		}
 
 		@Override
 		public ReferenceCounted touch(Object hint) {
+			if (m_tracker != null) {
+				m_tracker.record(hint);
+			}
 			return this;
 		}
 
 		@Override
 		protected void deallocate() {
+			if (m_tracker != null) {
+				m_tracker.close(this);
+			}
 		}
 		
 	}

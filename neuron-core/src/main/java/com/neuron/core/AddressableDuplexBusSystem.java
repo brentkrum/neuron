@@ -44,6 +44,7 @@ public final class AddressableDuplexBusSystem
 	private static final ReadWriteLock m_shutdownLock = new ReentrantReadWriteLock(true);
 	private static Promise<Void> m_shutdownPromise;
 	private static boolean m_shuttingDown = false;
+	private static boolean m_shutdownComplete = false;
 	
 	private AddressableDuplexBusSystem() {
 	}
@@ -119,6 +120,7 @@ public final class AddressableDuplexBusSystem
 			m_shutdownLock.writeLock().lock();
 			try {
 				if (m_shuttingDown && m_numConnectedSubmitters.get()==0) {
+					m_shutdownComplete = true;
 					m_shutdownPromise.setSuccess((Void)null);
 				}
 			} finally {
@@ -165,7 +167,7 @@ public final class AddressableDuplexBusSystem
 	private static void startAddSubmitter() {
 		m_shutdownLock.readLock().lock();
 		try {
-			if (m_shuttingDown) {
+			if (m_shutdownComplete) {
 				throw new SystemShutdownException();
 			}
 			m_numConnectedSubmitters.incrementAndGet();
@@ -179,6 +181,7 @@ public final class AddressableDuplexBusSystem
 			m_shutdownLock.writeLock().lock();
 			try {
 				if (m_shuttingDown && m_numConnectedReaders.get()==0) {
+					m_shutdownComplete = true;
 					m_shutdownPromise.setSuccess((Void)null);
 				}
 			} finally {
@@ -794,6 +797,7 @@ public final class AddressableDuplexBusSystem
 				m_shuttingDown = true;
 				if (m_numConnectedReaders.get()==0 && m_numConnectedSubmitters.get()==0) {
 					noActive = true;
+					m_shutdownComplete = true;
 				} else {
 					m_shutdownPromise = NeuronApplication.newPromise();
 					noActive = false;

@@ -14,16 +14,17 @@ import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.FastLinkedList;
 
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
 import io.netty.util.internal.PlatformDependent;
 
-public final class MessageQueueSystem
+class MessageQueueSystemBase
 {
-	private static final Logger LOG = LogManager.getLogger(MessageQueueSystem.class);
+	private static final Logger LOG = LogManager.getLogger(MessageQueueSystemBase.class);
 	
-	public static final String queueBrokerConfig_MaxMsgCount = "maxQueueMsgCount";
+	protected static final String queueBrokerConfig_MaxMsgCount = "maxQueueMsgCount";
 
 	private static final int DEFAULT_QUEUE_MSG_COUNT = Config.getFWInt("core.MessageQueueSystem.defaultMaxQueueMsgCount", Integer.valueOf(1024));
 	private static final ReadWriteLock m_brokerLock = new ReentrantReadWriteLock(true);
@@ -34,19 +35,13 @@ public final class MessageQueueSystem
 	private static final ReadWriteLock m_shutdownLock = new ReentrantReadWriteLock(true);
 	private static Promise<Void> m_shutdownPromise;
 	private static boolean m_shuttingDown = false;
+	private static boolean m_shutdownComplete = false;
 
-	private MessageQueueSystem() {
-	}
-
-	static void register() {
-		NeuronApplication.register(new Registrant());
-	}
-
-	public static String createFQQN(String declaringNeuronInstanceName, String queueName) {
+	protected static String createFQQN(String declaringNeuronInstanceName, String queueName) {
 		return declaringNeuronInstanceName + ":" + queueName;
 	}
 	
-	public static void defineQueue(String queueName, ObjectConfig queueConfig, IMessageQueueReaderCallback callback) {
+	protected static void defineQueue(String queueName, ObjectConfig queueConfig, IMessageQueueReaderCallback callback) {
 		NeuronSystemTLS.validateNeuronAwareThread();
 		final NeuronRef currentNeuronRef = NeuronSystemTLS.currentNeuron();
 		final String fqqn = createFQQN(currentNeuronRef.name(), queueName);
@@ -71,7 +66,7 @@ public final class MessageQueueSystem
 		
 	}
 	
-	public static void defineQueue(String queueName, ObjectConfig queueConfig, IMessageQueueAsyncReaderCallback callback) {
+	protected static void defineQueue(String queueName, ObjectConfig queueConfig, IMessageQueueAsyncReaderCallback callback) {
 		NeuronSystemTLS.validateNeuronAwareThread();
 		final NeuronRef currentNeuronRef = NeuronSystemTLS.currentNeuron();
 		final String fqqn = createFQQN(currentNeuronRef.name(), queueName);
@@ -117,6 +112,7 @@ public final class MessageQueueSystem
 			m_shutdownLock.writeLock().lock();
 			try {
 				if (m_shuttingDown && m_numConnectedSubmitters.get()==0) {
+					m_shutdownComplete = true;
 					m_shutdownPromise.setSuccess((Void)null);
 				}
 			} finally {
@@ -138,7 +134,7 @@ public final class MessageQueueSystem
 	 *  do anything with msg, the reference still stands and is now re-owned by the caller.
 	 *  
 	 */
-	public static boolean submitToQueue(String declaringNeuronInstanceName, String queueName, ReferenceCounted msg, IMessageQueueSubmissionListener listener) {
+	protected static boolean submitToQueue(String declaringNeuronInstanceName, String queueName, ReferenceCounted msg, IMessageQueueSubmissionListener listener) {
 		final String fqqn = createFQQN(declaringNeuronInstanceName, queueName);
 		return submitToQueue(fqqn, msg, listener);
 	}
@@ -154,7 +150,7 @@ public final class MessageQueueSystem
 	 *  do anything with msg, the reference still stands and is now re-owned by the caller.
 	 *  
 	 */
-	public static boolean submitToQueue(String fqqn, ReferenceCounted msg, IMessageQueueSubmissionListener listener) {
+	protected static boolean submitToQueue(String fqqn, ReferenceCounted msg, IMessageQueueSubmissionListener listener) {
 		if (fqqn == null) {
 			throw new IllegalArgumentException("fqqn cannot be null");
 		}
@@ -195,7 +191,7 @@ public final class MessageQueueSystem
 	private static void startAddSubmitter() {
 		m_shutdownLock.readLock().lock();
 		try {
-			if (m_shuttingDown) {
+			if (m_shutdownComplete) {
 				throw new SystemShutdownException();
 			}
 			m_numConnectedSubmitters.incrementAndGet();
@@ -209,6 +205,7 @@ public final class MessageQueueSystem
 			m_shutdownLock.writeLock().lock();
 			try {
 				if (m_shuttingDown && m_numConnectedReaders.get()==0) {
+					m_shutdownComplete = true;
 					m_shutdownPromise.setSuccess((Void)null);
 				}
 			} finally {
@@ -231,6 +228,7 @@ public final class MessageQueueSystem
 		private final ReferenceCounted m_msg;
 		private final NeuronRef m_listenerRef;
 		private final IMessageQueueSubmissionListener m_listener;
+		private ReferenceCounted m_response;
 		
 		// These can be called multiple times
 		private boolean m_wasReceived;
@@ -244,8 +242,9 @@ public final class MessageQueueSystem
 		private boolean m_undelivered; 
 		private boolean m_notifiedUndelivered; 
 		
+		
 		MessageWrapper(ReferenceCounted msg, NeuronRef listenerRef, IMessageQueueSubmissionListener listener) {
-			m_msg = msg;
+			m_msg = msg.retain(); // We own a reference to it, in addition to the one we are passing along
 			m_listenerRef = listenerRef;
 			m_listener = listener;
 		}
@@ -294,7 +293,8 @@ public final class MessageQueueSystem
 		}
 
 		@Override
-		public void setAsProcessed() {
+		public void setAsProcessed(ReferenceCounted response) {
+			m_response = response;
 			m_completedProcessing = true;
 			m_worker.requestMoreWork();
 		}
@@ -330,8 +330,9 @@ public final class MessageQueueSystem
 							LOG.error("Unhandled exception in listener callback", ex);
 						}
 					}
-					// The message was NOT delivered, so we still own the reference
-					m_msg.release();
+					// The message was NOT delivered, we still have two references (the one we added and the original)
+					ReferenceCountUtil.safeRelease(m_msg);
+					ReferenceCountUtil.safeRelease(m_msg);
 					return;
 				}
 				if (!m_wasReceived) {
@@ -373,12 +374,19 @@ public final class MessageQueueSystem
 					if (m_listener != null) {
 						try(INeuronStateLock lock = m_listenerRef.lockState()) {
 							if (lock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online, NeuronState.GoingOffline)) {
-								m_listener.onProcessed(m_msg);
+								if (m_listener instanceof ISimplexMessageQueueSubmissionListener) {
+									((ISimplexMessageQueueSubmissionListener)m_listener).onProcessed(m_msg);
+								} else {
+									((IDuplexMessageQueueSubmissionListener)m_listener).onProcessed(m_msg, m_response);
+								}
 							}
 						} catch(Exception ex) {
 							LOG.error("Unhandled exception in listener callback", ex);
 						}
 					}
+					ReferenceCountUtil.safeRelease(m_response);
+					// We still own a reference to this message, the other one was passed to reader
+					ReferenceCountUtil.safeRelease(m_msg);
 				}
 				
 			}
@@ -437,7 +445,7 @@ public final class MessageQueueSystem
 			m_numConnectedReaders.incrementAndGet();
 			NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Reader connected to queue '{}'", m_queueName);
 			
-			m_maxMsgCount = config.getInteger(MessageQueueSystem.queueBrokerConfig_MaxMsgCount, DEFAULT_QUEUE_MSG_COUNT);
+			m_maxMsgCount = config.getInteger(MessageQueueSystemBase.queueBrokerConfig_MaxMsgCount, DEFAULT_QUEUE_MSG_COUNT);
 			final IMessageReader r = m_reader;
 			try(INeuronStateLock lock = m_reader.owner().lockState()) {
 				lock.addStateListener(NeuronState.SystemOnline, (ignoreParam) -> {
@@ -570,10 +578,10 @@ public final class MessageQueueSystem
 			}
 
 			@Override
-			public void setAsProcessed() {
+			public void setAsProcessed(ReferenceCounted response) {
 				synchronized(CreatedQueueBroker.this) {
 					if (m_wrapped != null) {
-						m_wrapped.setAsProcessed();
+						m_wrapped.setAsProcessed(response);
 						m_wrapped = null;
 						m_currentCheckout = null;
 						if (m_reader != null) {
@@ -600,48 +608,38 @@ public final class MessageQueueSystem
 		}
 	}
 	
-	private static class Registrant implements INeuronApplicationSystem {
-
-		@Override
-		public String systemName()
-		{
-			return "MessageQueueSystem";
-		}
-
-		@Override
-		public Future<Void> startShutdown() {
-			final boolean noActive;
-			m_shutdownLock.writeLock().lock();
-			try {
-				m_shuttingDown = true;
-				if (m_numConnectedReaders.get()==0 && m_numConnectedSubmitters.get()==0) {
-					noActive = true;
-				} else {
-					m_shutdownPromise = NeuronApplication.newPromise();
-					noActive = false;
-				}
-			} finally {
-				m_shutdownLock.writeLock().unlock();
+	protected static Future<Void> startShutdown() {
+		final boolean noActive;
+		m_shutdownLock.writeLock().lock();
+		try {
+			m_shuttingDown = true;
+			if (m_numConnectedReaders.get()==0 && m_numConnectedSubmitters.get()==0) {
+				noActive = true;
+			} else {
+				m_shutdownPromise = NeuronApplication.newPromise();
+				noActive = false;
 			}
-			if (noActive) {
-				closeQueues();
-				return NeuronApplication.newSucceededFuture((Void)null);
-			}
-			final Promise<Void> shutdownCompletePromise = NeuronApplication.newPromise();
-			m_shutdownPromise.addListener((f) -> {
-				closeQueues();
-				shutdownCompletePromise.trySuccess((Void)null);
-			});
-			return shutdownCompletePromise;
+		} finally {
+			m_shutdownLock.writeLock().unlock();
 		}
-		
-		private void closeQueues() {
-			m_queueBrokerByName.forEach((name, q) -> {
-				q.close();
-				return true;
-			});
-			m_queueBrokerByName.clear();
+		if (noActive) {
+			closeQueues();
+			return NeuronApplication.newSucceededFuture((Void)null);
 		}
-		
+		final Promise<Void> shutdownCompletePromise = NeuronApplication.newPromise();
+		m_shutdownPromise.addListener((f) -> {
+			closeQueues();
+			shutdownCompletePromise.trySuccess((Void)null);
+		});
+		return shutdownCompletePromise;
 	}
+	
+	private static void closeQueues() {
+		m_queueBrokerByName.forEach((name, q) -> {
+			q.close();
+			return true;
+		});
+		m_queueBrokerByName.clear();
+	}
+
 }
