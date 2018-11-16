@@ -41,7 +41,7 @@ class MessageQueueSystemBase
 		return declaringNeuronInstanceName + ":" + queueName;
 	}
 	
-	protected static void defineQueue(String queueName, ObjectConfig queueConfig, IMessageQueueReaderCallback callback) {
+	protected static void defineQueue(String queueName, ObjectConfig queueConfig, IDuplexMessageQueueReaderCallback callback) {
 		NeuronSystemTLS.validateNeuronAwareThread();
 		final NeuronRef currentNeuronRef = NeuronSystemTLS.currentNeuron();
 		final String fqqn = createFQQN(currentNeuronRef.name(), queueName);
@@ -288,31 +288,20 @@ class MessageQueueSystemBase
 
 		@Override
 		public void setAsStartedProcessing() {
-			m_startedProcessing = true;
-			m_worker.requestMoreWork();
+			if (!m_startedProcessing) {
+				m_startedProcessing = true;
+				m_worker.requestMoreWork();
+			}
 		}
 
 		@Override
 		public void setAsProcessed(ReferenceCounted response) {
+			m_wasReceived = true;
+			m_startedProcessing = true;
 			m_response = response;
 			m_completedProcessing = true;
 			m_worker.requestMoreWork();
 		}
-//
-//		@Override
-//		public boolean waitForReceived(long timeoutInMS) {
-//			return m_wasReceived.awaitUninterruptibly(timeoutInMS);
-//		}
-//
-//		@Override
-//		public boolean waitForStartedProcessing(long timeoutInMS) {
-//			return m_startedProcessing.awaitUninterruptibly(timeoutInMS);
-//		}
-//
-//		@Override
-//		public boolean waitForProcessed(long timeoutInMS) {
-//			return m_completedProcessing.awaitUninterruptibly(timeoutInMS);
-//		}
 		
 		private final class Worker extends PerpetualWork {
 

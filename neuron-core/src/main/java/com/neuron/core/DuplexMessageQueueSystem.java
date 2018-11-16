@@ -20,7 +20,7 @@ public final class DuplexMessageQueueSystem extends MessageQueueSystemBase
 		return MessageQueueSystemBase.createFQQN(declaringNeuronInstanceName, queueName);
 	}
 	
-	public static void defineQueue(String queueName, ObjectConfig queueConfig, IMessageQueueReaderCallback callback) {
+	public static void defineQueue(String queueName, ObjectConfig queueConfig, IDuplexMessageQueueReaderCallback callback) {
 		MessageQueueSystemBase.defineQueue(queueName, queueConfig, callback);
 	}
 	

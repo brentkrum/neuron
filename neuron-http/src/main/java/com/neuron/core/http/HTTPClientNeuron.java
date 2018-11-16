@@ -6,6 +6,7 @@ import org.asynchttpclient.AsyncHttpClient;
 import org.asynchttpclient.Dsl;
 
 import com.neuron.core.DefaultNeuronInstanceBase;
+import com.neuron.core.DuplexMessageQueueSystem;
 import com.neuron.core.INeuronInitialization;
 import com.neuron.core.MessagePipeSystem;
 import com.neuron.core.NeuronApplication;
@@ -28,8 +29,8 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 
 	@Override
 	public void connectResources() {
-		DuplexMessageQueueSystem.defineQueue("Execute", ObjectConfigBuilder.emptyConfig(), () -> {
-			
+		DuplexMessageQueueSystem.defineQueue("Execute", ObjectConfigBuilder.emptyConfig(), (msg) -> {
+			return null;
 		});
 		
 	}

@@ -14,10 +14,10 @@ class MessageQueueReader implements MessageQueueSystemBase.IMessageReader
 	
 	private final EventWorker m_worker;
 	private final NeuronRef m_owner;
-	private final IMessageQueueReaderCallback m_callback;
+	private final IDuplexMessageQueueReaderCallback m_callback;
 	private volatile QueueBroker m_broker;
 	
-	MessageQueueReader(NeuronRef ref, QueueBroker broker, ObjectConfig config, IMessageQueueReaderCallback callback) {
+	MessageQueueReader(NeuronRef ref, QueueBroker broker, ObjectConfig config, IDuplexMessageQueueReaderCallback callback) {
 		m_owner = ref;
 		m_broker = broker;
 		m_worker = new EventWorker(ref);

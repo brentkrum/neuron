@@ -366,9 +366,6 @@ public final class NeuronApplication {
 			} catch(Exception ex) {
 				LOG.error("Exception during system startup", ex);
 			}
-			if (!r.waitForSuccessfulShutdown()) {
-				LOG.error("Unsuccessful shutdown of registrant {}", r.m_registrant.toString());
-			}
 		}
 
 		for(int i=numAppSystems-1; i>=0; i--) {

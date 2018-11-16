@@ -3,6 +3,8 @@ package com.neuron.core;
 import static com.neuron.core.test.NeuronStateTestUtils.createFutureForState;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.AfterAll;
@@ -83,7 +85,7 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 		}
 		
 		// Take template A offline (hence neuron A too)
-		TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
+//		TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
 	}
 
 	public static class RWTestTemplateA extends DefaultTestNeuronTemplateBase {
@@ -102,10 +104,12 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			private static final Logger LOG = LogManager.getLogger(NeuronA.class);
 			private final QueueListener m_listener = new QueueListener();
 			private long m_toWrite = 0;
+			private final AtomicInteger m_outstanding = new AtomicInteger();
 			private volatile boolean m_shutdown;
 			private ConstantWriter m_worker;
 			private String m_fqqn;
 			private TestMessage m_cur;
+			private Promise<Void> m_goingOfflinePromise;
 			
 			public NeuronA(NeuronRef instanceRef) {
 				super(instanceRef);
@@ -118,14 +122,24 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			}
 
 			@Override
+			public void init(Promise<Void> promise) {
+				try(INeuronStateLock lock = this.ref().lockState()) {
+					lock.addStateAsyncListener(NeuronState.GoingOffline, (success, goingOfflineComplete) -> {
+						if (success) {
+							m_goingOfflinePromise = goingOfflineComplete;
+							m_shutdown = true;
+							m_worker.requestMoreWork();
+						} else {
+							goingOfflineComplete.setSuccess((Void)null);
+						}
+					});
+				}
+				promise.setSuccess((Void)null);
+			}
+
+			@Override
 			public void nowOnline() {
 				m_worker.requestMoreWork();
-			}
-			
-			@Override
-			public void deinit(Promise<Void> promise) {
-				m_shutdown = true;
-				promise.setSuccess((Void)null);
 			}
 
 			private class ConstantWriter extends PerpetualWorkContextAware {
@@ -138,6 +152,7 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 				@Override
 				protected void _doWork(INeuronStateLock lock) {
 //					LOG.info("ConstantWriter writing. Neuron state={}", lock.currentState());
+					m_outstanding.incrementAndGet();
 					try {
 						while(!m_shutdown) {
 							if (m_cur == null) {
@@ -146,6 +161,7 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 							if (SimplexMessageQueueSystem.submitToQueue(m_fqqn, m_cur, m_listener)) {
 //								LOG.info("<<<<<<< Submitted {}", m_cur.m_data);
 								m_toWrite++;
+								m_outstanding.incrementAndGet();
 								m_cur = null;
 							} else {
 //								LOG.info("<<<<<<< PipeFull");
@@ -155,19 +171,35 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 					} catch(Exception ex) {
 						m_testFuture.tryFailure(ex);
 					}
-					requestMoreWork();
+					endMsgProcessing();
+					if (m_shutdown && m_cur != null) {
+						endMsgProcessing();
+						m_cur = null;
+					}
+					if (!m_shutdown) {
+						requestMoreWork();
+					}
 //					LOG.info("ConstantWriter stopped. Neuron state={}", lock.currentState());
 				}
 				
 			}
 			
-			private static final class QueueListener implements ISimplexMessageQueueSubmissionListener {
+			private void endMsgProcessing() {
+				if (m_outstanding.decrementAndGet() == 0 && m_shutdown && !m_goingOfflinePromise.isDone()) {
+					m_goingOfflinePromise.trySuccess((Void)null);
+				}
+			}
+			
+			private final class QueueListener implements ISimplexMessageQueueSubmissionListener {
  
 				@Override
 				public void onUndelivered(ReferenceCounted msg) {
-					LOG.info("Undelivered: {}", ((TestMessage)msg).m_data);
-					m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
+//					if (!m_shutdown) {
+//						LOG.info("Undelivered: {}", ((TestMessage)msg).m_data);
+//						m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
+//					}
 					msg.touch();
+					endMsgProcessing();
 				}
 
 				@Override
@@ -186,6 +218,7 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 				public void onProcessed(ReferenceCounted msg) {
 //					LOG.info("Processed: {}", ((TestMessage)msg).m_data);
 					msg.touch();
+					endMsgProcessing();
 				}
 				
 			}
