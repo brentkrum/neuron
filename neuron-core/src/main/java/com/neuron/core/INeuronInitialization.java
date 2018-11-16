@@ -28,13 +28,21 @@ public interface INeuronInitialization extends INeuron
 	default void onInitTimeout() {
 	}
 	
+	default void goingOffline(Promise<Void> promise) {
+		promise.setSuccess((Void)null);
+	}
+	default long goingOfflineTimeoutInMS() {
+		return 5000;
+	}
+	default void onGoingOfflineTimeout() {
+	}
+	
 	default void deinit(Promise<Void> promise) {
 		promise.setSuccess((Void)null);
 	}
 	default long deinitTimeoutInMS() {
 		return 5000;
 	}
-	
 	default void onDeinitTimeout() {
 	}
 	

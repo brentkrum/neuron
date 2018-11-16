@@ -83,9 +83,9 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			
 			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Done reading {} expected={}", i, m_expected);
 		}
-		
-		// Take template A offline (hence neuron A too)
-//		TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateA").syncUninterruptibly();
+		if (m_testFuture.cause() != null) {
+			Assertions.fail(m_testFuture.cause());
+		}
 	}
 
 	public static class RWTestTemplateA extends DefaultTestNeuronTemplateBase {
@@ -194,10 +194,10 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
  
 				@Override
 				public void onUndelivered(ReferenceCounted msg) {
-//					if (!m_shutdown) {
-//						LOG.info("Undelivered: {}", ((TestMessage)msg).m_data);
-//						m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
-//					}
+					if (((TestMessage)msg).m_data < m_expected) {
+						LOG.fatal("Undelivered: {}", ((TestMessage)msg).m_data);
+						m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
+					}
 					msg.touch();
 					endMsgProcessing();
 				}

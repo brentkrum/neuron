@@ -178,7 +178,7 @@ public class Neuron_ConstructAndInit_Test
 		
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Online state");
 		assertTrue(createFutureForState(nMgt.currentRef(), NeuronState.Offline).awaitUninterruptibly(1000), "Timeout waiting for neuron to enter Offline state");
-		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Timeout of 1ms initializing neuron"));
+		assertTrue(NeuronStateTestUtils.logContains(nMgt.currentRef(), "java.lang.RuntimeException: Timeout of 1ms waiting on neuron 'InitTimeout' method init()"));
 	}
 
 	public static class InitTimeoutTestTemplate extends DefaultTestNeuronTemplateBase {

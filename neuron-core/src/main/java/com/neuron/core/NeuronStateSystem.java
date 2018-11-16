@@ -3,6 +3,7 @@ package com.neuron.core;
 import java.util.ArrayList;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.concurrent.Callable;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.ReadWriteLock;
@@ -33,6 +34,8 @@ public final class NeuronStateSystem {
 
 	private static final boolean LOCK_LEAK_DETECTION = Config.getFWBoolean("core.NeuronStateSystem.lockLeakDetection", false);
 	private static final long DEFAULT_INIT_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateSystem.defaultInitTimeout", 5000);
+	private static final long DEFAULT_GOING_OFFLINE_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateSystem.defaultGoingOfflineTimeout", 5000);
+	private static final long DEFAULT_DEINIT_TIMEOUT_IN_MS = Config.getFWInt("core.NeuronStateSystem.defaultDeinitTimeout", 5000);
 	private static final int MAX_LOG_SIZE = Config.getFWInt("core.NeuronStateSystem.logSize", 64);
 	private static final int MAX_OLD_GEN = Config.getFWInt("core.NeuronStateSystem.maxNumOldGen", 4);
 	
@@ -235,17 +238,17 @@ public final class NeuronStateSystem {
 						}
 					}
 					if (successful) {
-						setState(NeuronState.Disconnecting);
+						onGoingOffline();
 					}
 				});
 				getStateManager(NeuronState.Disconnecting).setPostListener((boolean successful) -> {
 					if (successful) {
-						onDeInitializing();
+						setState(NeuronState.Deinitializing);
 					}
 				});
 				getStateManager(NeuronState.Deinitializing).setPostListener((boolean successful) -> {
 					if (successful) {
-						setState(NeuronState.SystemOffline);
+						onDeInitializing();
 					}
 				});
 				getStateManager(NeuronState.SystemOffline).setPostListener((boolean successful) -> {
@@ -367,6 +370,23 @@ public final class NeuronStateSystem {
 				}
 			}
 			
+			public void onGoingOffline() {
+				final Promise<Void> p = m_myEventLoop.newPromise();
+				NeuronSystemTLS.add(this);
+				try {
+					callGoingOffline(m_neuron, m_name, p);
+				} finally {
+					NeuronSystemTLS.remove();
+				}
+				if (p.isDone()) {
+					setState(NeuronState.Disconnecting);
+				} else {
+					p.addListener((f) -> {
+						setState(NeuronState.Disconnecting);
+					});
+				}
+			}
+			
 			public void onDeInitializing() {
 				final Promise<Void> p = m_myEventLoop.newPromise();
 				NeuronSystemTLS.add(this);
@@ -376,10 +396,10 @@ public final class NeuronStateSystem {
 					NeuronSystemTLS.remove();
 				}
 				if (p.isDone()) {
-					setState(NeuronState.Deinitializing);
+					setState(NeuronState.SystemOffline);
 				} else {
 					p.addListener((f) -> {
-						setState(NeuronState.Deinitializing);
+						setState(NeuronState.SystemOffline);
 					});
 				}
 			}
@@ -715,6 +735,43 @@ public final class NeuronStateSystem {
 		}
 	}
 	
+	
+	private static void attachTimeoutToNeuronMethod(String methodName, INeuronInitialization neuron, String neuronName, final Promise<Void> donePromise, Callable<Long> timeoutMethod, long defaultTimeout) {
+		if (donePromise.isDone()) {
+			return;
+		}
+		long timeoutInMS;
+		try {
+			timeoutInMS = timeoutMethod.call();
+			if (timeoutInMS <= 0) {
+				NeuronApplication.logError(LOG, "{} timeout from neuron '{}' is invalid (returned value was {} which is not allowed).  Using default value of {} instead.",  methodName, neuronName, timeoutInMS, defaultTimeout);
+				timeoutInMS = defaultTimeout;
+			}
+		} catch(Exception ex) {
+			timeoutInMS = defaultTimeout;
+			NeuronApplication.logError(LOG, "Failure getting {} timeout from neuron '{}',  Using default value of {} instead.", methodName, neuronName, timeoutInMS, ex);
+		}
+		final NeuronRef ref = NeuronSystemTLS.currentNeuron();
+		final long toMS = timeoutInMS;
+		final ScheduledFuture<?> timeoutPromise = NeuronApplication.getTaskPool().schedule(() -> {
+			if (donePromise.tryFailure( new RuntimeException("Timeout of " + toMS + "ms waiting on neuron '" + neuronName + "' method " + methodName + "()") )) {
+				NeuronSystemTLS.add(ref);
+				try {
+					neuron.onGoingOfflineTimeout();
+				} catch(Exception ex) {
+					NeuronApplication.logError(LOG, "Exception from neuron {} on-timeout method", methodName, ex);
+				} finally {
+					NeuronSystemTLS.remove();
+				}
+			}
+		}, timeoutInMS, TimeUnit.MILLISECONDS);
+		
+		donePromise.addListener((Future<Void> f) -> {
+			timeoutPromise.cancel(false);
+		});
+	}
+	
+	
 	private static void initializeNeuron(INeuronInitialization neuron, String name, final Promise<Void> initDone) {
 		try {
 			neuron.init(initDone);
@@ -723,38 +780,18 @@ public final class NeuronStateSystem {
 			initDone.tryFailure(ex);
 			return;
 		}
-		if (initDone.isDone()) {
+		attachTimeoutToNeuronMethod("init", neuron, name, initDone, neuron::initTimeoutInMS, DEFAULT_INIT_TIMEOUT_IN_MS);
+	}
+	
+	private static void callGoingOffline(INeuronInitialization neuron, String name, final Promise<Void> goingOfflineDone) {
+		try {
+			neuron.goingOffline(goingOfflineDone);
+		} catch(Exception ex) {
+			NeuronApplication.logError(LOG, "Exception thrown from neuron.goingOffline()", ex);
+			goingOfflineDone.tryFailure(ex);
 			return;
 		}
-		long timeoutInMS;
-		try {
-			timeoutInMS = neuron.initTimeoutInMS();
-			if (timeoutInMS <= 0) {
-				NeuronApplication.logError(LOG, "Init timeout from neuron '{}' is invalid (returned value was {} which is not allowed).  Using default value of {} instead.",  name, timeoutInMS, DEFAULT_INIT_TIMEOUT_IN_MS);
-				timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
-			}
-		} catch(Exception ex) {
-			timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
-			NeuronApplication.logError(LOG, "Failure getting init timeout from neuron '{}',  Using default value of {} instead.", name, timeoutInMS, ex);
-		}
-		final NeuronRef ref = NeuronSystemTLS.currentNeuron();
-		final long toMS = timeoutInMS;
-		final ScheduledFuture<?> initTimeout = NeuronApplication.getTaskPool().schedule(() -> {
-			if (initDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms initializing neuron '" + name + "'") )) {
-				NeuronSystemTLS.add(ref);
-				try {
-					neuron.onInitTimeout();
-				} catch(Exception ex) {
-					NeuronApplication.logError(LOG, "Exception from neuron.onInitTimeout()", ex);
-				} finally {
-					NeuronSystemTLS.remove();
-				}
-			}
-		}, timeoutInMS, TimeUnit.MILLISECONDS);
-		
-		initDone.addListener((Future<Void> f) -> {
-			initTimeout.cancel(false);
-		});
+		attachTimeoutToNeuronMethod("goingOffline", neuron, name, goingOfflineDone, neuron::goingOfflineTimeoutInMS, DEFAULT_GOING_OFFLINE_TIMEOUT_IN_MS);
 	}
 	
 	private static void deinitializeNeuron(INeuronInitialization neuron, String name, final Promise<Void> deinitDone) {
@@ -765,38 +802,7 @@ public final class NeuronStateSystem {
 			deinitDone.tryFailure(ex);
 			return;
 		}
-		if (deinitDone.isDone()) {
-			return;
-		}
-		long timeoutInMS;
-		try {
-			timeoutInMS = neuron.deinitTimeoutInMS();
-			if (timeoutInMS <= 0) {
-				NeuronApplication.logError(LOG, "Deinit timeout from neuron '{}' is invalid (returned value was {} which is not allowed).  Using default value of {} instead.",  name, timeoutInMS, DEFAULT_INIT_TIMEOUT_IN_MS);
-				timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
-			}
-		} catch(Exception ex) {
-			timeoutInMS = DEFAULT_INIT_TIMEOUT_IN_MS;
-			NeuronApplication.logError(LOG, "Failure getting Deinit timeout from neuron '{}',  Using default value of {} instead.", name, timeoutInMS, ex);
-		}
-		final NeuronRef ref = NeuronSystemTLS.currentNeuron();
-		final long toMS = timeoutInMS;
-		final ScheduledFuture<?> deinitTimeout = NeuronApplication.getTaskPool().schedule(() -> {
-			if (deinitDone.tryFailure( new RuntimeException("Timeout of " + toMS + "ms de-initializing neuron '" + name + "'") )) {
-				NeuronSystemTLS.add(ref);
-				try {
-					neuron.onDeinitTimeout();
-				} catch(Exception ex) {
-					NeuronApplication.logError(LOG, "Exception from neuron.onDeinitTimeout()", ex);
-				} finally {
-					NeuronSystemTLS.remove();
-				}
-			}
-		}, timeoutInMS, TimeUnit.MILLISECONDS);
-		
-		deinitDone.addListener((Future<Void> f) -> {
-			deinitTimeout.cancel(false);
-		});
+		attachTimeoutToNeuronMethod("deinit", neuron, name, deinitDone, neuron::deinitTimeoutInMS, DEFAULT_DEINIT_TIMEOUT_IN_MS);
 	}
 	
 	
