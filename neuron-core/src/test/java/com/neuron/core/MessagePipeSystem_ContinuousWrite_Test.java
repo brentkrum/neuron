@@ -3,10 +3,7 @@ package com.neuron.core;
 import static com.neuron.core.test.NeuronStateTestUtils.createFutureForState;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-import java.util.concurrent.atomic.AtomicInteger;
-
 import org.apache.logging.log4j.LogManager;
-import org.apache.logging.log4j.Logger;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
@@ -27,13 +24,14 @@ import io.netty.util.ResourceLeakDetectorFactory;
 import io.netty.util.ResourceLeakTracker;
 import io.netty.util.concurrent.Promise;
 
-public class SimplexMessageQueueSystem_ContinuousWrite_Test {
+public class MessagePipeSystem_ContinuousWrite_Test {
 	@BeforeAll
 	public static void init() {
 //		System.setProperty("logger.com.neuron.core.StatusSystem", "DEBUG");
-//		System.setProperty("logger.com.neuron.core.MessageQueueSystem", "TRACE");
+//		System.setProperty("logger.com.neuron.core.MessagePipeSystem", "DEBUG");
 		System.setProperty("com.neuron.core.NeuronThreadContext.leakDetection", "true");
 		System.setProperty("io.netty.leakDetection.level", "PARANOID");
+		System.setProperty("io.netty.leakDetection.targetRecords", "1");
 		
 		NeuronApplicationBootstrap.bootstrapUnitTest("test-log4j2.xml", new String[0]).run();
 	}
@@ -45,7 +43,8 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 
 
 	private static Promise<Void> m_testFuture; 
-	private static long m_expected = 0;
+	private static long m_firstData = 0;
+	private static long m_lastData = 0;
 	
 	@Test
 	public void testReadWrite() {
@@ -63,14 +62,16 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 		INeuronManagement nMgtB = NeuronStateSystem.registerNeuron("RWTestTemplateB", "NeuronB");
 
 		for(int i=0; i<100; i++) {
-			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Bring Template B online");
+			m_firstData = -1;
+			m_lastData = -1;
+			LogManager.getLogger(MessagePipeSystem_ContinuousWrite_Test.class).info("Bring Template B online");
 			assertTrue(TemplateStateTestUtils.bringTemplateOnline(tMgtB).syncUninterruptibly().isSuccess());
 			
-			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
+			LogManager.getLogger(MessagePipeSystem_ContinuousWrite_Test.class).info("Bring Neuron B online");
 			assertTrue(nMgtB.bringOnline(ObjectConfigBuilder.config().build()));
 			assertTrue(createFutureForState(nMgtB.currentRef(), NeuronState.Online).awaitUninterruptibly(1000), "Timeout waiting for neuron B to enter Online state");
 			
-			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Running test - {}", i);
+			LogManager.getLogger(MessagePipeSystem_ContinuousWrite_Test.class).info("Running test - {}", i);
 			// Let the test run for 25ms
 			m_testFuture.awaitUninterruptibly(25);
 			if (m_testFuture.isDone() && !m_testFuture.isSuccess()) {
@@ -78,10 +79,12 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			}
 	
 			// Take template B offline (hence neuron B too)
-			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Take template B offline");
+			LogManager.getLogger(MessagePipeSystem_ContinuousWrite_Test.class).info("Take template B offline");
 			TemplateStateTestUtils.takeTemplateOffline("RWTestTemplateB").syncUninterruptibly();
 			
-			LogManager.getLogger(SimplexMessageQueueSystem_ContinuousWrite_Test.class).info("Done reading {} expected={}", i, m_expected);
+			LogManager.getLogger(MessagePipeSystem_ContinuousWrite_Test.class).info("Done reading {} first={} last={}", i, m_firstData, m_lastData);
+			Assertions.assertNotEquals(-1, m_firstData);
+			Assertions.assertNotEquals(-1, m_lastData);
 		}
 		if (m_testFuture.cause() != null) {
 			Assertions.fail(m_testFuture.cause());
@@ -101,16 +104,13 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 		}
 		
 		private static class NeuronA extends DefaultNeuronInstanceBase {
-			private static final Logger LOG = LogManager.getLogger(NeuronA.class);
-			private final QueueListener m_listener = new QueueListener();
+//			private static final Logger LOG = LogManager.getLogger(NeuronA.class);
 			private long m_toWrite = 0;
-			private final AtomicInteger m_outstanding = new AtomicInteger();
 			private volatile boolean m_shutdown;
 			private ConstantWriter m_worker;
-			private String m_fqqn;
 			private TestMessage m_cur;
 			private Promise<Void> m_goingOfflinePromise;
-			
+			private MessagePipeSystem.IPipeWriterContext m_writerContext;
 			public NeuronA(NeuronRef instanceRef) {
 				super(instanceRef);
 			}
@@ -118,27 +118,21 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			@Override
 			public void connectResources() {
 				m_worker = new ConstantWriter();
-				m_fqqn = SimplexMessageQueueSystem.createFQQN("NeuronB", "A->B");
-			}
-
-			@Override
-			public void init(Promise<Void> promise) {
-				try(INeuronStateLock lock = this.ref().lockState()) {
-					lock.addStateAsyncListener(NeuronState.GoingOffline, (success, goingOfflineComplete) -> {
-						if (success) {
-							m_goingOfflinePromise = goingOfflineComplete;
-							m_shutdown = true;
-							m_worker.requestMoreWork();
-						} else {
-							goingOfflineComplete.setSuccess((Void)null);
-						}
-					});
-				}
-				promise.setSuccess((Void)null);
+				MessagePipeSystem.configurePipeBroker("A->B", ObjectConfigBuilder.emptyConfig());
+				m_writerContext = MessagePipeSystem.writeToPipe("A->B", ObjectConfigBuilder.emptyConfig(), (event, context) -> {
+					m_worker.requestMoreWork();
+				});
 			}
 
 			@Override
 			public void nowOnline() {
+				m_worker.requestMoreWork();
+			}
+
+			@Override
+			public void goingOffline(Promise<Void> promise) {
+				m_goingOfflinePromise = promise;
+				m_shutdown = true;
 				m_worker.requestMoreWork();
 			}
 
@@ -152,16 +146,17 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 				@Override
 				protected void _doWork(INeuronStateLock lock) {
 //					LOG.info("ConstantWriter writing. Neuron state={}", lock.currentState());
-					m_outstanding.incrementAndGet();
+					if (m_shutdown && m_goingOfflinePromise.isDone()) {
+						return;
+					}
 					try {
 						while(!m_shutdown) {
 							if (m_cur == null) {
 								m_cur = new TestMessage(m_toWrite);
 							}
-							if (SimplexMessageQueueSystem.submitToQueue(m_fqqn, m_cur, m_listener)) {
+							if (m_writerContext.offer(m_cur)) {
 //								LOG.info("<<<<<<< Submitted {}", m_cur.m_data);
 								m_toWrite++;
-								m_outstanding.incrementAndGet();
 								m_cur = null;
 							} else {
 //								LOG.info("<<<<<<< PipeFull");
@@ -171,54 +166,13 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 					} catch(Exception ex) {
 						m_testFuture.tryFailure(ex);
 					}
-					endMsgProcessing();
-					if (m_shutdown && m_cur != null) {
-						endMsgProcessing();
+					if (m_shutdown) {
+						m_goingOfflinePromise.trySuccess((Void)null);
 						m_cur = null;
-					}
-					if (!m_shutdown) {
+					} else {
 						requestMoreWork();
 					}
 //					LOG.info("ConstantWriter stopped. Neuron state={}", lock.currentState());
-				}
-				
-			}
-			
-			private void endMsgProcessing() {
-				if (m_outstanding.decrementAndGet() == 0 && m_shutdown && !m_goingOfflinePromise.isDone()) {
-					m_goingOfflinePromise.trySuccess((Void)null);
-				}
-			}
-			
-			private final class QueueListener implements ISimplexMessageQueueSubmissionListener {
- 
-				@Override
-				public void onUndelivered(ReferenceCounted msg) {
-					if (((TestMessage)msg).m_data < m_expected) {
-						LOG.fatal("Undelivered: {}", ((TestMessage)msg).m_data);
-						m_testFuture.tryFailure(new RuntimeException("Just for stack trace"));
-					}
-					msg.touch();
-					endMsgProcessing();
-				}
-
-				@Override
-				public void onReceived(ReferenceCounted msg) {
-//					LOG.info("Received: {}", ((TestMessage)msg).m_data);
-					msg.touch();
-				}
-
-				@Override
-				public void onStartProcessing(ReferenceCounted msg) {
-//					LOG.info("Started: {}", ((TestMessage)msg).m_data);
-					msg.touch();
-				}
-
-				@Override
-				public void onProcessed(ReferenceCounted msg) {
-//					LOG.info("Processed: {}", ((TestMessage)msg).m_data);
-					msg.touch();
-					endMsgProcessing();
 				}
 				
 			}
@@ -246,15 +200,12 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			
 			@Override
 			public void connectResources() {
-				SimplexMessageQueueSystem.defineQueue("A->B", ObjectConfigBuilder.config().build(), (ReferenceCounted qMsg) -> {
-					long cur = ((TestMessage)qMsg).m_data;
-//					LOG.info(">>>>>>>> Read {}", cur);
-					if (cur != m_expected) {
-						m_testFuture.tryFailure(new RuntimeException(cur + " != " + m_expected));
-					} else {
-						m_expected++;
+				MessagePipeSystem.readFromPipe("NeuronA", "A->B", ObjectConfigBuilder.emptyConfig(), (ReferenceCounted qMsg) -> {
+					m_lastData = ((TestMessage)qMsg).m_data;
+					if (m_firstData == -1) {
+						m_firstData = m_lastData;
 					}
-					qMsg.release();
+//					LOG.info(">>>>>>>> Read {}", cur);
 				});
 			}
 
