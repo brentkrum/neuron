@@ -164,11 +164,18 @@ public final class NeuronStateSystem {
 					m_current = new InstanceManagement(currentTemplateRef, m_nextNeuronGen.incrementAndGet(), config);
 					mgt = m_current;
 				}
-				((ITemplateStateLockInternal)templateLock).registerNeuron(m_current);
-				
-				// At this point it is safe to use it outside the lock
+				// At this point it is safe to use m_current outside the lock
 				// It currently is in the state of NA and there is no way to change that except
-				// by the thread there is here.
+				// by the thread that is here.
+				if (!((ITemplateStateLockInternal)templateLock).registerNeuron(m_current)) {
+					NeuronSystemTLS.add(m_current);
+					try {
+						mgt.abortToOffline(new SingleInstanceTemplateException("Failed registering neuron with its template.  This is due to bringing online a second instance of a neuron to a single-instance template"), true);
+					} finally {
+						NeuronSystemTLS.remove();
+					}
+					return false;
+				}
 				
 				mgt.setState(NeuronState.BeingCreated);
 			}

@@ -7,6 +7,7 @@ import java.util.concurrent.TimeUnit;
 
 import org.apache.logging.log4j.LogManager;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -281,6 +282,47 @@ public class Neuron_ConstructAndInit_Test
 		public OnlineTemplateOffline(TemplateRef ref)
 		{
 			super(ref);
+		}
+
+		@Override
+		public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config) {
+			return new MyNeuron(ref);
+		}
+		
+		private static class MyNeuron extends DefaultNeuronInstanceBase {
+			public MyNeuron(NeuronRef instanceRef) {
+				super(instanceRef);
+			}
+		}
+	}
+	
+	@Test
+	public void singleInstanceTemplate() {
+		assertTrue(TemplateStateTestUtils.registerAndBringOnline("SingleInstanceTemplate", SingleInstanceTemplate.class).awaitUninterruptibly(1000));
+
+		assertTrue(NeuronStateTestUtils.bringOnline("SingleInstanceTemplate", "SingleInstanceTemplateNeuronA", ObjectConfigBuilder.emptyConfig()).awaitUninterruptibly(1000));
+		
+		final Future<Void> f = NeuronStateTestUtils.bringOnline("SingleInstanceTemplate", "SingleInstanceTemplateNeuronB", ObjectConfigBuilder.emptyConfig());
+		Assertions.assertTrue(f.awaitUninterruptibly(1000));
+		Assertions.assertTrue(f.isDone());
+		Assertions.assertFalse(f.isSuccess());
+		Assertions.assertNotNull(f.cause());
+		Assertions.assertEquals("bringOnline() returned false", f.cause().getMessage());
+		assertTrue(NeuronStateTestUtils.logContains(NeuronStateSystem.manage("SingleInstanceTemplateNeuronB").currentRef(), "com.neuron.core.SingleInstanceTemplateException: Failed registering neuron with its template."));
+		
+		TemplateStateTestUtils.takeTemplateOffline("SingleInstanceTemplate").awaitUninterruptibly(1000);
+	}
+	
+	public static class SingleInstanceTemplate extends DefaultTestNeuronTemplateBase {
+		
+		public SingleInstanceTemplate(TemplateRef ref)
+		{
+			super(ref);
+		}
+
+		@Override
+		public boolean isSingleInstance() {
+			return true;
 		}
 
 		@Override

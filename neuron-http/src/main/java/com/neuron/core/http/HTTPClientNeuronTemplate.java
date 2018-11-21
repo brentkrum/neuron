@@ -4,6 +4,7 @@ import com.neuron.core.DefaultNeuronTemplateBase;
 import com.neuron.core.INeuronInitialization;
 import com.neuron.core.NeuronApplication;
 import com.neuron.core.NeuronRef;
+import com.neuron.core.ObjectConfigBuilder;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 import com.neuron.core.TemplateRef;
 
@@ -25,13 +26,13 @@ public class HTTPClientNeuronTemplate extends DefaultNeuronTemplateBase
 	@Override
 	public boolean isSingleInstance()
 	{
-		return false;
+		return true;
 	}
 
 	@Override
 	public INeuronInitialization createNeuron(NeuronRef ref, ObjectConfig config)
 	{
-		return new HTTPClientNeuron(ref);
+		return new HTTPClientNeuron(ref, ObjectConfigBuilder.emptyConfig());
 	}
 
 }

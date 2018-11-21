@@ -165,6 +165,7 @@ public final class TemplateStateSystem {
 			private final LinkedList<NeuronLogEntry> m_log = new LinkedList<>();
 			private final IntTrie<NeuronRef> m_activeNeuronsByGen = new IntTrie<>();
 			private INeuronTemplate m_template;
+			private boolean m_isSingleInstance;
 			private TemplateState m_state = TemplateState.NA;
 			private int m_stateLockCount;
 			private IGroupStateListenerRemoval m_groupOfflineTrigger;
@@ -245,6 +246,7 @@ public final class TemplateStateSystem {
 							return;
 						}
 						m_template = m_constructor.newInstance((TemplateRef)this) ;
+						m_isSingleInstance = m_template.isSingleInstance();
 						
 						synchronized(InstanceManagement.this) {
 							// When the template enters the state TakeTemplatesOffline
@@ -591,8 +593,21 @@ public final class TemplateStateSystem {
 				}
 				
 				@Override
-				public void registerNeuron(NeuronRef ref) {
+				public boolean canRegisterNeuron() {
+					if (!m_isSingleInstance) {
+						return true;
+					}
 					synchronized(m_activeNeuronsByGen) {
+						return (m_activeNeuronsByGen.count() == 0);
+					}
+				}
+
+				@Override
+				public boolean registerNeuron(NeuronRef ref) {
+					synchronized(m_activeNeuronsByGen) {
+						if (m_isSingleInstance && m_activeNeuronsByGen.count() != 0) {
+							return false;
+						}
 						if (m_activeNeuronsByGen.addOrFetch(ref.generation(), ref) != null) {
 							LOG.fatal("Added a neuron reference which already existed.  This should never happen.", new RuntimeException("Just for the stack trace"));
 							NeuronApplication.fatalExit();
@@ -627,6 +642,7 @@ public final class TemplateStateSystem {
 							}
 						});
 					}
+					return true;
 				}
 
 				@Override

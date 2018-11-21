@@ -289,6 +289,7 @@ class MessageQueueSystemBase
 		@Override
 		public void setAsStartedProcessing() {
 			if (!m_startedProcessing) {
+				m_wasReceived = true;
 				m_startedProcessing = true;
 				m_worker.requestMoreWork();
 			}

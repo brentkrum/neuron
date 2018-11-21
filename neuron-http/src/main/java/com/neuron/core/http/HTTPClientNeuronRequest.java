@@ -5,8 +5,15 @@ import java.util.List;
 
 import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpHeaderValues;
+import io.netty.util.AbstractReferenceCounted;
+import io.netty.util.ReferenceCounted;
+import io.netty.util.ResourceLeakDetector;
+import io.netty.util.ResourceLeakDetectorFactory;
+import io.netty.util.ResourceLeakTracker;
 
-public final class HTTPClientNeuronRequest {
+public final class HTTPClientNeuronRequest extends AbstractReferenceCounted {
+	private static final ResourceLeakDetector<HTTPClientNeuronRequest> LEAK_DETECT = ResourceLeakDetectorFactory.instance().newResourceLeakDetector(HTTPClientNeuronRequest.class);
+	private final ResourceLeakTracker<HTTPClientNeuronRequest> m_tracker;
 	private final String m_method;
 	private final String m_url;
 	  
@@ -24,13 +31,29 @@ public final class HTTPClientNeuronRequest {
 	public HTTPClientNeuronRequest(String url) {
 		m_method = "GET";
 		m_url = url;
+		m_tracker = LEAK_DETECT.track(this);
 	}
 	
 	public HTTPClientNeuronRequest(String method, String url) {
 		m_method = method;
 		m_url = url;
+		m_tracker = LEAK_DETECT.track(this);
 	}
 	
+	@Override
+	public ReferenceCounted touch(Object hint) {
+		if (m_tracker != null) {
+			m_tracker.record(hint);
+		}
+		return this;
+	}
+	@Override
+	protected void deallocate() {
+		if (m_tracker != null) {
+			m_tracker.close(this);
+		}
+	}
+
 	public String getMethod() {
 		return m_method;
 	}
