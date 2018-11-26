@@ -15,6 +15,7 @@ import org.apache.logging.log4j.Logger;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
+import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.FastLinkedList;
 
@@ -226,7 +227,7 @@ public final class AddressableDuplexBusSystem
 		void close();
 	}
 
-	private static final class MessageWrapper extends FastLinkedList.LLNode<MessageWrapper> implements IAddressableDuplexBusSubmission {
+	private static final class MessageWrapper extends FastLinkedList.LLNode<MessageWrapper> {
 		private static final AtomicInteger m_nextId = new AtomicInteger();
 		private final int m_messageId = m_nextId.incrementAndGet();
 		private final Worker m_worker = new Worker();
@@ -249,6 +250,7 @@ public final class AddressableDuplexBusSystem
 		
 		private ReferenceCounted m_responseMsg;
 		private Throwable m_failureCause;
+		private Runnable m_resetCallback;
 		
 		MessageWrapper(ReferenceCounted msg, NeuronRef listenerRef, IDuplexBusSubmissionListener listener) {
 			m_requestMsg = msg;
@@ -260,11 +262,6 @@ public final class AddressableDuplexBusSystem
 		protected MessageWrapper getObject() {
 			return this;
 		}
-
-		void reset() {
-			m_reset = true;
-			m_worker.requestMoreWork();
-		}
 		
 		// Mutually exclusive with setAsReceived()
 		void setAsUndelivered() {
@@ -273,39 +270,38 @@ public final class AddressableDuplexBusSystem
 		}
 		
 		// Mutually exclusive with setAsUndelivered()
-		@Override
-		public void setAsReceived() {
+		void setAsReceived() {
 			if (!m_wasReceived) {
 				m_wasReceived = true;
 				m_worker.requestMoreWork();
 			}
 		}
 
-		@Override
-		public int id() {
+		int id() {
 			return m_messageId;
 		}
 
-		@Override
-		public ReferenceCounted message() {
+		ReferenceCounted startProcessing() {
+			if (!m_startedProcessing) {
+				m_startedProcessing = true;
+				m_worker.requestMoreWork();
+			}
 			return m_requestMsg;
 		}
 
-		@Override
-		public void setAsStartedProcessing() {
-			m_startedProcessing = true;
+		void reset(Runnable resetCallback) {
+			m_resetCallback = resetCallback;
+			m_reset = true;
 			m_worker.requestMoreWork();
 		}
 
-		@Override
-		public void setAsProcessed(ReferenceCounted responseMsg) {
+		void setAsProcessed(ReferenceCounted responseMsg) {
 			m_responseMsg = responseMsg;
 			m_completedProcessing = true;
 			m_worker.requestMoreWork();
 		}
 
-		@Override
-		public void setAsFailed(Throwable t) {
+		void setAsFailed(Throwable t) {
 			m_failureCause = t;
 			m_completedProcessing = true;
 			m_worker.requestMoreWork();
@@ -351,6 +347,8 @@ public final class AddressableDuplexBusSystem
 						}
 						requestMoreWork();
 					}
+					m_resetCallback.run();
+					m_resetCallback = null;
 				}
 				if (!m_wasReceived) {
 					return;
@@ -614,16 +612,24 @@ public final class AddressableDuplexBusSystem
 					}
 				});
 				
-				lock.addStateListener(NeuronState.Disconnecting, (ignoreThis) -> {
-					closeReader();
-					readerDisconnected();
-					NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from bus '{}' address '{}'", m_busName, m_address);
-					// TODO Do we need to remove this address from the Bus!?!?!?!? <<<<------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+				final NeuronRef nRef = m_reader.owner();
+				lock.addStateAsyncListener(NeuronState.Disconnecting, (successful, promise) -> {
+					final Promise<Void> closePromise = NeuronApplication.newPromise();
+					closePromise.addListener((f) -> {
+						try(INeuronStateLock l = nRef.lockState()) {
+							NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from bus '{}' address '{}'", m_busName, m_address);
+						}
+						promise.setSuccess((Void)null);
+						readerDisconnected();
+						// TODO Do we need to remove this address from the Bus!?!?!?!? <<<<------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+					});
+					closeReader(closePromise);
 				});
 			}
 		}
 		
-		synchronized void closeReader() {
+		synchronized void closeReader(Promise<Void> closePromise) {
+			final TSPromiseCombiner groupPromise = new TSPromiseCombiner();
 			// Clear the in-process messages
 			while(true) {
 				// Remove the oldest item, reset it, and put back into queue
@@ -631,8 +637,11 @@ public final class AddressableDuplexBusSystem
 				if (cw == null) {
 					break;
 				}
-				cw.close0();
+				Promise<Void> p = NeuronApplication.newPromise();
+				groupPromise.add(p);
+				cw.close0(p);
 			}
+			groupPromise.finish(closePromise);
 			m_reader.close();
 			m_reader = null;
 		}
@@ -679,8 +688,10 @@ public final class AddressableDuplexBusSystem
 		
 		private class CheckoutWrapper extends FastLinkedList.LLNode<CheckoutWrapper> implements IAddressableDuplexBusSubmission {
 			private final int m_id;
-			private MessageWrapper m_wrapped;
-
+			private volatile MessageWrapper m_wrapped;
+			private volatile boolean m_started;
+			private volatile Promise<Void> m_closePromise;
+			
 			CheckoutWrapper(MessageWrapper wrapped) {
 				m_id = wrapped.id();
 				m_wrapped = wrapped;
@@ -691,14 +702,26 @@ public final class AddressableDuplexBusSystem
 				return this;
 			}
 
-			private void close0() {
-				if (m_wrapped != null) {
-					if (LOG.isTraceEnabled()) {
-						LOG.trace("Bus {} address {} moving message {} from in-process back to queue", m_busName, m_address, m_id);
+			private void close0(Promise<Void> closePromise) {
+				synchronized(ReaderBroker.this) {
+					if (m_wrapped == null) {
+						closePromise.setSuccess((Void)null);
+						return;
 					}
-					// Push to front of queue
-					m_queue.addFirst(m_wrapped);
-					m_wrapped.reset();
+					if (m_started) {
+						m_closePromise = closePromise;
+						return;
+					}
+					m_wrapped.reset(() -> {
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Bus {} address {} moving message {} from in-process back to queue", m_busName, m_address, m_id);
+						}
+						synchronized(ReaderBroker.this) {
+							// Push to front of queue
+							m_queue.addFirst(m_wrapped);
+						}
+						closePromise.setSuccess((Void)null);
+					});
 					m_wrapped = null;
 				}
 			}
@@ -718,10 +741,41 @@ public final class AddressableDuplexBusSystem
 			}
 
 			@Override
-			public void setAsStartedProcessing() {
+			public ReferenceCounted startProcessing() {
 				synchronized(ReaderBroker.this) {
 					if (m_wrapped != null) {
-						m_wrapped.setAsStartedProcessing();
+						m_started = true;
+						return m_wrapped.startProcessing();
+					}
+					return null;
+				}
+			}
+			
+			
+
+			@Override
+			public void cancelProcessing() {
+				synchronized(ReaderBroker.this) {
+					m_wrapped.reset(() -> {
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Bus {} address {} moving message {} from in-process back to queue", m_busName, m_address, m_id);
+						}
+						synchronized(ReaderBroker.this) {
+							// Push to front of queue
+							m_queue.addFirst(m_wrapped);
+						}
+						if (m_closePromise != null) {
+							m_closePromise.setSuccess((Void)null);
+							m_closePromise = null;
+						}
+					});
+					m_wrapped = null;
+					if (m_reader != null) {
+						// We have to notify the reader that there might now be items to dequeue
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Bus {} address {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_busName, m_address);
+						}
+						m_reader.onEvent(IMessageReader.Event.DataReady);
 					}
 				}
 			}
@@ -735,6 +789,10 @@ public final class AddressableDuplexBusSystem
 					m_inProcess.remove(this);
 					m_wrapped.setAsProcessed(responseMsg);
 					m_wrapped = null;
+					if (m_closePromise != null) {
+						m_closePromise.setSuccess((Void)null);
+						m_closePromise = null;
+					}
 					if (m_reader != null) {
 						// We have to notify the reader that there might now be items to dequeue
 						if (LOG.isTraceEnabled()) {
@@ -760,17 +818,6 @@ public final class AddressableDuplexBusSystem
 							LOG.trace("Bus {} address {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_busName, m_address);
 						}
 						m_reader.onEvent(IMessageReader.Event.DataReady);
-					}
-				}
-			}
-
-			@Override
-			public ReferenceCounted message() {
-				synchronized(ReaderBroker.this) {
-					if (m_wrapped != null) {
-						return m_wrapped.message();
-					} else {
-						return null;
 					}
 				}
 			}

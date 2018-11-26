@@ -79,46 +79,54 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 
 	@Override
 	public void connectResources() {
-		DuplexMessageQueueSystem.defineQueue("Execute", ObjectConfigBuilder.emptyConfig(),
-				(IMessageQueueSubmission context) -> {
-					context.setAsStartedProcessing();
-					
-					HTTPClientNeuronRequest nReq = (HTTPClientNeuronRequest)context.message();
-					BoundRequestBuilder req = m_client.prepareGet(nReq.getURL());
-					
-					req.setMethod(nReq.getMethod());
-					if (nReq.getQueryParams() != null) {
-						for(HTTPClientNeuronRequest.NameValue nv :  nReq.getQueryParams()) {
-							req.addQueryParam(nv.name, nv.value);
-						}
+		DuplexMessageQueueSystem.defineQueue("Execute", ObjectConfigBuilder.emptyConfig(), (IMessageQueueSubmission context) -> {
+			final HTTPClientNeuronRequest nReq = (HTTPClientNeuronRequest)context.startProcessing();
+			final BoundRequestBuilder req;
+			try {
+				req = m_client.prepareGet(nReq.getURL());
+				
+				req.setMethod(nReq.getMethod());
+				if (nReq.getQueryParams() != null) {
+					for(HTTPClientNeuronRequest.NameValue nv :  nReq.getQueryParams()) {
+						req.addQueryParam(nv.name, nv.value);
 					}
-					if (nReq.getFormParams() != null) {
-						for(HTTPClientNeuronRequest.NameValue nv :  nReq.getFormParams()) {
-							req.addFormParam(nv.name, nv.value);
-						}
-					} else if (nReq.getBodyData() != null) {
-						req.setBody(nReq.getBodyData());
+				}
+				if (nReq.getFormParams() != null) {
+					for(HTTPClientNeuronRequest.NameValue nv :  nReq.getFormParams()) {
+						req.addFormParam(nv.name, nv.value);
 					}
-					if (nReq.getHeaders() != null) {
-						for(HTTPClientNeuronRequest.NameValue nv :  nReq.getHeaders()) {
-							req.addHeader(nv.name, nv.value);
-						}
+				} else if (nReq.getBodyData() != null) {
+					req.setBody(nReq.getBodyData());
+				}
+				if (nReq.getHeaders() != null) {
+					for(HTTPClientNeuronRequest.NameValue nv :  nReq.getHeaders()) {
+						req.addHeader(nv.name, nv.value);
 					}
-					if (nReq.followRedirect()  != null) {
-						req.setFollowRedirect(nReq.followRedirect());
-					}
-					if (nReq.readTimeout() != null) {
-						req.setReadTimeout(nReq.readTimeout());
-					}
-					if (nReq.requestTimeout() != null) {
-						req.setRequestTimeout(nReq.requestTimeout());
-					}
-					//req.setRealm(realm)
-					//req.setSignatureCalculator(signatureCalculator);
-
-					RequestHandler handler = new RequestHandler(context);
-					handler.setResponseFuture(req.execute(handler));
-				});
+				}
+				if (nReq.followRedirect()  != null) {
+					req.setFollowRedirect(nReq.followRedirect());
+				}
+				if (nReq.readTimeout() != null) {
+					req.setReadTimeout(nReq.readTimeout());
+				}
+				if (nReq.requestTimeout() != null) {
+					req.setRequestTimeout(nReq.requestTimeout());
+				}
+				//req.setRealm(realm)
+				//req.setSignatureCalculator(signatureCalculator);
+				
+				final RequestHandler handler = new RequestHandler(context);
+				// I am trusting that if req.execute throws an exception it is not in a bad state.  If it catches an
+				// exception I am expecting it to call the future it returns.  If it allows an exception to be thrown
+				// I trust that it means that it will not put anything into the future
+				handler.setResponseFuture(req.execute(handler));
+			} catch(Exception ex) {
+				LOG.error("Unexpected exception", ex);
+				final HTTPClientNeuronResponse nResponse = new HTTPClientNeuronResponse(false);
+				context.setAsProcessed(nResponse);
+				return;
+			}
+		});
 
 	}
 
@@ -128,6 +136,7 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 			promise.setSuccess((Void) null);
 
 		} else {
+			// TODO need to wait until all outstanding requests are done <<-----------------------------------------------------------------------------------------------------------------------------
 			NeuronApplication.getTaskPool().submit(() -> {
 				try {
 					m_client.close();

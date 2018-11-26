@@ -70,9 +70,12 @@ class AddressableDuplexBusReader implements AddressableDuplexBusSystem.IMessageR
 				if (submission == null) {
 					return;
 				}
-				submission.setAsStartedProcessing();
 				try {
-					m_listener.onRequest(submission.message()).addListener((Future<ReferenceCounted> requestFuture) -> {
+					final ReferenceCounted msg = submission.startProcessing();
+					if (msg == null) {
+						return;
+					}
+					m_listener.onRequest(msg).addListener((Future<ReferenceCounted> requestFuture) -> {
 						try {
 							if (requestFuture.isSuccess()) {
 								submission.setAsProcessed(requestFuture.getNow());

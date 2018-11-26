@@ -254,12 +254,12 @@ class MessageQueueSystemBase
 			return this;
 		}
 
-		void reset() {
-			m_wasReceived = false;
-			m_notifiedReceived = false;
-			m_startedProcessing = false;
-			m_notifiedStartedProcessing = false;
-		}
+//		void reset() {
+//			m_wasReceived = false;
+//			m_notifiedReceived = false;
+//			m_startedProcessing = false;
+//			m_notifiedStartedProcessing = false;
+//		}
 		
 		// Mutually exclusive with setAsReceived()
 		void setAsUndelivered() {
@@ -282,17 +282,21 @@ class MessageQueueSystemBase
 		}
 
 		@Override
-		public ReferenceCounted message() {
-			return m_msg;
-		}
-
-		@Override
-		public void setAsStartedProcessing() {
+		public ReferenceCounted startProcessing() {
 			if (!m_startedProcessing) {
 				m_wasReceived = true;
 				m_startedProcessing = true;
 				m_worker.requestMoreWork();
 			}
+			return m_msg;
+		}
+
+		@Override
+		public void cancelProcessing() {
+			m_wasReceived = false;
+			m_notifiedReceived = false;
+			m_startedProcessing = false;
+			m_notifiedStartedProcessing = false;
 		}
 
 		@Override
@@ -452,19 +456,27 @@ class MessageQueueSystemBase
 						}
 					}
 				});
-				
-				lock.addStateListener(NeuronState.Disconnecting, (ignoreThis) -> {
-					closeReader();
-					readerDisconnected();
-					NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from queue '{}'", m_queueName);
+				final NeuronRef nRef = m_reader.owner();
+				lock.addStateAsyncListener(NeuronState.Disconnecting, (successful, promise) -> {
+					final Promise<Void> closePromise = NeuronApplication.newPromise();
+					closePromise.addListener((f) -> {
+						try(INeuronStateLock l = nRef.lockState()) {
+							NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from queue '{}'", m_queueName);
+						}
+						promise.setSuccess((Void)null);
+						readerDisconnected();
+					});
+					closeReader(closePromise);
 				});
 			}
 		}
 		
-		synchronized void closeReader() {
+		synchronized void closeReader(Promise<Void> promise) {
 			if (m_currentCheckout != null) {
-				m_currentCheckout.close0();
+				m_currentCheckout.close0(promise);
 				m_currentCheckout = null;
+			} else {
+				promise.setSuccess((Void)null);
 			}
 			m_reader.close();
 			m_reader = null;
@@ -526,21 +538,33 @@ class MessageQueueSystemBase
 		
 		private class CheckoutWrapper implements IMessageQueueSubmission {
 			private final int m_id;
-			private MessageWrapper m_wrapped;
-
+			private volatile MessageWrapper m_wrapped;
+			private volatile boolean m_started;
+			private volatile Promise<Void> m_closingPromise;
+			
 			CheckoutWrapper(MessageWrapper wrapped) {
 				m_id = wrapped.id();
 				m_wrapped = wrapped;
 			}
 			
-			private void close0() {
-				if (m_wrapped != null) {
+			private void close0(Promise<Void> closingPromise) {
+				synchronized(CreatedQueueBroker.this) {
+					if (m_wrapped == null) {
+						m_closingPromise.setSuccess((Void)null);
+						return;
+					}
+					if (m_started) {
+						// The message has been grabbed by neuron and is currently being processed
+						m_closingPromise = closingPromise;
+						return;
+					}
 					if (LOG.isTraceEnabled()) {
 						LOG.trace("Queue {} moving incomplete message back to queue", m_queueName);
 					}
-					m_wrapped.reset();
+					m_wrapped.cancelProcessing();
 					m_queue.addFirst(m_wrapped);
 					m_wrapped = null;
+					m_closingPromise.setSuccess((Void)null);
 				}
 			}
 			
@@ -559,21 +583,32 @@ class MessageQueueSystemBase
 			}
 
 			@Override
-			public void setAsStartedProcessing() {
+			public ReferenceCounted startProcessing() {
 				synchronized(CreatedQueueBroker.this) {
 					if (m_wrapped != null) {
-						m_wrapped.setAsStartedProcessing();
+						m_started = true;
+						return m_wrapped.startProcessing();
 					}
 				}
+				return null;
 			}
 
+			
 			@Override
-			public void setAsProcessed(ReferenceCounted response) {
+			public void cancelProcessing() {
 				synchronized(CreatedQueueBroker.this) {
 					if (m_wrapped != null) {
-						m_wrapped.setAsProcessed(response);
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Queue {} moving cancelled message back to queue", m_queueName);
+						}
+						m_wrapped.cancelProcessing();
+						m_queue.addFirst(m_wrapped);
 						m_wrapped = null;
 						m_currentCheckout = null;
+						if (m_closingPromise != null) {
+							m_closingPromise.setSuccess((Void)null);
+							m_closingPromise = null;
+						}
 						if (m_reader != null) {
 							if (LOG.isTraceEnabled()) {
 								LOG.trace("Queue {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_queueName);
@@ -585,12 +620,22 @@ class MessageQueueSystemBase
 			}
 
 			@Override
-			public ReferenceCounted message() {
+			public void setAsProcessed(ReferenceCounted response) {
 				synchronized(CreatedQueueBroker.this) {
 					if (m_wrapped != null) {
-						return m_wrapped.message();
-					} else {
-						return null;
+						m_wrapped.setAsProcessed(response);
+						m_wrapped = null;
+						m_currentCheckout = null;
+						if (m_closingPromise != null) {
+							m_closingPromise.setSuccess((Void)null);
+							m_closingPromise = null;
+						}
+						if (m_reader != null) {
+							if (LOG.isTraceEnabled()) {
+								LOG.trace("Queue {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_queueName);
+							}
+							m_reader.onEvent(IMessageReader.Event.DataReady);
+						}
 					}
 				}
 			}

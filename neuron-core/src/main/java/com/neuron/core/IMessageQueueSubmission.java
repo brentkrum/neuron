@@ -10,7 +10,11 @@ public interface IMessageQueueSubmission {
 	 */
 	int id();
 	void setAsReceived();
-	void setAsStartedProcessing();
+	
+	/**
+	 * This can return null under certain edge cases when a Neuron is disconnecting.
+	 */
+	ReferenceCounted startProcessing();
 	
 	/**
 	 * For simplex message queues, pass null as the response
@@ -20,7 +24,8 @@ public interface IMessageQueueSubmission {
 	void setAsProcessed(ReferenceCounted response);
 	
 	/**
-	 * This can return null under certain edge cases when a Neuron is disconnecting.
+	 * This can be used during shutdown after setAsStartedProcessing has been called to
+	 * put the mssage back into the queue 
 	 */
-	ReferenceCounted message();
+	void cancelProcessing();
 }

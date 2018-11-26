@@ -8,6 +8,8 @@ import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
 
+import io.netty.util.ReferenceCounted;
+
 class MessageQueueReader implements MessageQueueSystemBase.IMessageReader
 {
 	private static final Logger LOG = LogManager.getLogger(MessageQueueReader.class);
@@ -68,11 +70,18 @@ class MessageQueueReader implements MessageQueueSystemBase.IMessageReader
 				if (submission == null) {
 					return;
 				}
-				submission.setAsStartedProcessing();
+				
 				try {
-					submission.setAsProcessed( m_callback.onData(submission.message()) );
+					final ReferenceCounted req = submission.startProcessing();
+					if (req == null) {
+						return;
+					}
+					final ReferenceCounted res = m_callback.onData(req);
+					submission.setAsProcessed( res );
 				} catch(Throwable t) {
 					NeuronApplication.logError(LOG, "Unhandled exception in user provided callback, returning null response message", t);
+					// We don't want to call cancelMessage here since we don't want to create an infinite loop of exceptions thrown from onData with
+					// the same set of inputs being repeatedly fed back into it
 					submission.setAsProcessed(null);
 				}
 				requestMoreWork();

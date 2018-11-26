@@ -10,11 +10,17 @@ public interface IAddressableDuplexBusSubmission {
 	 */
 	int id();
 	void setAsReceived();
-	void setAsStartedProcessing();
-	void setAsProcessed(ReferenceCounted responseMsg);
-	void setAsFailed(Throwable t);
+	
 	/**
 	 * This can return null under certain edge cases when a Neuron is disconnecting.
 	 */
-	ReferenceCounted message();
+	ReferenceCounted startProcessing();
+
+	/**
+	 * This is used to return the message to the queue as unprocessed after startProcessing() has been called.
+	 */
+	void cancelProcessing();
+	
+	void setAsProcessed(ReferenceCounted responseMsg);
+	void setAsFailed(Throwable t);
 }
