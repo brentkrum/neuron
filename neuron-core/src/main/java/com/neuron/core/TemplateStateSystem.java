@@ -419,8 +419,9 @@ public final class TemplateStateSystem {
 							m_lockTracking.remove(lockTrackingId);
 						}
 						if (m_pendingState != null) {
-							setState0(m_pendingState);
+							final TemplateState pendingState = m_pendingState;
 							m_pendingState = null;
+							setState0(pendingState);
 						}
 					}
 				} finally {
@@ -485,7 +486,6 @@ public final class TemplateStateSystem {
 								}));
 							} else {
 								Promise<Void> promise = m_myEventLoop.newPromise();
-								tsp.add(promise);
 								NeuronSystemTLS.add(InstanceManagement.this);
 								try {
 									((ITemplateStateAsyncListener)listener).onStateReached(successful, promise);
@@ -494,11 +494,12 @@ public final class TemplateStateSystem {
 								} finally {
 									NeuronSystemTLS.remove();
 								}
+								tsp.add(promise);
 							}
 							return true;
 						});
+						final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 						if (m_systemPostListener != null) {
-							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 							aggregatePromise.addListener((f) -> {
 								NeuronSystemTLS.add(InstanceManagement.this);
 								try {
@@ -510,8 +511,8 @@ public final class TemplateStateSystem {
 									NeuronSystemTLS.remove();
 								}
 							});
-							tsp.finish(aggregatePromise);
 						}
+						tsp.finish(aggregatePromise);
 					});
 				}
 				
