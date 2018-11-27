@@ -124,7 +124,7 @@ public class SimplexMessageQueueSystem_ContinuousWrite_Test {
 			@Override
 			public void init(Promise<Void> promise) {
 				try(INeuronStateLock lock = this.ref().lockState()) {
-					lock.addStateAsyncListener(NeuronState.GoingOffline, (success, goingOfflineComplete) -> {
+					lock.addStateAsyncListener(NeuronState.GoingOffline, (success, neuronRef, goingOfflineComplete) -> {
 						if (success) {
 							m_goingOfflinePromise = goingOfflineComplete;
 							m_shutdown = true;

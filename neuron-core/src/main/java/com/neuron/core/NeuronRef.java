@@ -74,7 +74,7 @@ public abstract class NeuronRef {
 	}
 	
 	public interface INeuronStateAsyncListener extends INeuronStateListener {
-		void onStateReached(boolean successful, Promise<Void> promise);
+		void onStateReached(boolean successful, NeuronRef ref, Promise<Void> promise);
 	}
 	
 	public interface INeuronStateListenerRemoval {

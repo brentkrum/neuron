@@ -479,7 +479,7 @@ public final class NeuronStateSystem {
 				}
 				StatusSystem.setStatus(this, st, reasonText);
 				if (!promise.trySuccess(InstanceManagement.this)) {
-					LOG.fatal("Failed setting promise state to {}. This should never happen.", m_state);
+					LOG.fatal("Failed setting promise state to {}. This should never happen.", state);
 				}
 			}
 
@@ -512,8 +512,9 @@ public final class NeuronStateSystem {
 							m_lockTracking.remove(lockTrackingId);
 						}
 						if (m_pendingState != null) {
-							setState0(m_pendingState);
+							final NeuronState pendingState = m_pendingState;
 							m_pendingState = null;
+							setState0(pendingState);
 						}
 					}
 				} finally {
@@ -577,20 +578,21 @@ public final class NeuronStateSystem {
 								}));
 							} else {
 								Promise<Void> promise = m_myEventLoop.newPromise();
-								tsp.add(promise);
 								NeuronSystemTLS.add(InstanceManagement.this);
 								try {
-									((INeuronStateAsyncListener)listener).onStateReached(successful, promise);
+									((INeuronStateAsyncListener)listener).onStateReached(successful, InstanceManagement.this, promise);
 								} catch(Exception ex) {
 									NeuronApplication.logError(LOG, "Exception calling state listener", ex);
+									promise.setSuccess((Void)null);
 								} finally {
 									NeuronSystemTLS.remove();
 								}
+								tsp.add(promise);
 							}
 							return true;
 						});
+						final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 						if (m_systemPostListener != null) {
-							final Promise<Void> aggregatePromise = m_myEventLoop.newPromise();
 							aggregatePromise.addListener((f) -> {
 								NeuronSystemTLS.add(InstanceManagement.this);
 								try {
@@ -602,8 +604,8 @@ public final class NeuronStateSystem {
 									NeuronSystemTLS.remove();
 								}
 							});
-							tsp.finish(aggregatePromise);
 						}
+						tsp.finish(aggregatePromise);
 					});
 				}
 				

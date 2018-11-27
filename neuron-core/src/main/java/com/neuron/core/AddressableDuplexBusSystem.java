@@ -611,12 +611,11 @@ public final class AddressableDuplexBusSystem
 						}
 					}
 				});
-				
-				final NeuronRef nRef = m_reader.owner();
-				lock.addStateAsyncListener(NeuronState.Disconnecting, (successful, promise) -> {
+
+				lock.addStateAsyncListener(NeuronState.Disconnecting, (successful, neuronRef, promise) -> {
 					final Promise<Void> closePromise = NeuronApplication.newPromise();
 					closePromise.addListener((f) -> {
-						try(INeuronStateLock l = nRef.lockState()) {
+						try(INeuronStateLock l = neuronRef.lockState()) {
 							NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from bus '{}' address '{}'", m_busName, m_address);
 						}
 						promise.setSuccess((Void)null);
