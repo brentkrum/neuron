@@ -100,7 +100,7 @@ public class OutboundSocketNeuron extends DefaultNeuronInstanceBase implements I
 		});
 		
 		try(INeuronStateLock lock = ref().lockState()) {
-			lock.addStateAsyncListener(NeuronState.SystemOnline, (success, completedPromise) -> {
+			lock.addStateAsyncListener(NeuronState.SystemOnline, (success, neuronRef, completedPromise) -> {
 				if (success) {
 					synchronized(OutboundSocketNeuron.this) {
 						m_connectionState = ConnectionState.Connecting;

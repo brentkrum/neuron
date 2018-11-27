@@ -1,5 +1,6 @@
 package com.neuron.core.http;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -23,7 +24,8 @@ public final class HTTPClientNeuronRequest extends AbstractReferenceCounted {
 	  
 	private String m_stringData;
 	private List<NameValue> m_formParams;
-	  
+
+	private File m_responseBodyOutputFile;
 	private Boolean m_followRedirect;
 	private Integer m_requestTimeout;
 	private Integer m_readTimeout;
@@ -81,7 +83,14 @@ public final class HTTPClientNeuronRequest extends AbstractReferenceCounted {
 	public Integer readTimeout() {
 		return m_readTimeout;
 	}
+	public File getResponseBodyOutputFile() {
+		return m_responseBodyOutputFile;
+	}
 
+	public void setResponseBodyOutputFile(File file) {
+		m_responseBodyOutputFile = file;
+	}
+	
 	public void addQueryParam(String name, String value) {
 		if (m_queryParams == null) {
 			m_queryParams = new ArrayList<>();

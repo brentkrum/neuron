@@ -23,8 +23,11 @@ public interface IMessageQueueSubmissionListener {
 	 * 
 	 * @param msg
 	 */
-	void onReceived(ReferenceCounted msg);
-	void onStartProcessing(ReferenceCounted msg);
+	default void onReceived(ReferenceCounted msg) {
+	}
+	default void onStartProcessing(ReferenceCounted msg) {
+	}
 	
-	void onUndelivered(ReferenceCounted msg);
+	default void onUndelivered(ReferenceCounted msg) {
+	}
 }

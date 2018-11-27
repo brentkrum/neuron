@@ -14,10 +14,17 @@ public class HTTPClientNeuronResponse extends AbstractReferenceCounted {
 	private int m_httpStatusCode;
 	private String m_httpStatusText;
 	private ByteBuf m_responseData;
+	private String m_errorMessage;
 	
-	public HTTPClientNeuronResponse(boolean protocolSuccess) {
+	public HTTPClientNeuronResponse() {
 		m_tracker = LEAK_DETECT.track(this);
-		m_protocolSuccess = protocolSuccess;
+		m_protocolSuccess = true;
+	}
+	
+	public HTTPClientNeuronResponse(String errorMessage) {
+		m_tracker = LEAK_DETECT.track(this);
+		m_protocolSuccess = false;
+		m_errorMessage = errorMessage;
 	}
 	
 	@Override
@@ -35,6 +42,10 @@ public class HTTPClientNeuronResponse extends AbstractReferenceCounted {
 		if (m_responseData != null) {
 			m_responseData.release();
 		}
+	}
+	
+	public String getErrorMessage() {
+		return m_errorMessage;
 	}
 
 	/**

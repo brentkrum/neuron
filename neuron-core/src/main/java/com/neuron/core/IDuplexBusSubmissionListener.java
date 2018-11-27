@@ -31,6 +31,12 @@ public interface IDuplexBusSubmissionListener {
 	default void onReset(ReferenceCounted requestMsg) {
 	}
 	
+	/**
+	 * 
+	 * 
+	 * @param requestMsg - If you want to keep the passed-in requestMsg you must call retain()
+	 * @param responseMsg - If you want to keep the passed-in responseMsg you must call retain()
+	 */
 	default void onProcessed(ReferenceCounted requestMsg, ReferenceCounted responseMsg) {
 	}
 	default void onSystemFailure(ReferenceCounted requestMsg) {

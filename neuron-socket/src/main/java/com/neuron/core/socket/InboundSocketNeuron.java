@@ -111,7 +111,7 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 		});
 		
 		try(INeuronStateLock lock = ref().lockState()) {
-			lock.addStateAsyncListener(NeuronState.SystemOnline, (success, completedPromise) -> {
+			lock.addStateAsyncListener(NeuronState.SystemOnline, (success, neuronRef, completedPromise) -> {
 				if (success) {
 					synchronized(InboundSocketNeuron.this) {
 						m_serverState = ServerState.Binding;
@@ -223,7 +223,7 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 					return;
 				}
 
-				final INeuronStateListenerRemoval listenerRemove = lock.addStateAsyncListener(NeuronState.Deinitializing, (success, completed) -> {
+				final INeuronStateListenerRemoval listenerRemove = lock.addStateAsyncListener(NeuronState.Deinitializing, (success, neuronRef, completed) -> {
 					if (LOG.isDebugEnabled()) {
 						try(INeuronStateLock callbackLock = ref().lockState()) {
 							LOG.debug("DeInit closing");

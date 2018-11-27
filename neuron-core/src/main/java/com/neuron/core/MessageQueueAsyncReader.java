@@ -72,7 +72,8 @@ class MessageQueueAsyncReader implements MessageQueueSystemBase.IMessageReader
 				} catch(Throwable t) {
 					NeuronApplication.logError(LOG, "Unhandled exception in user provided callback", t);
 				}
-				
+				requestMoreWork();
+
 			} catch(Exception ex) {
 				LOG.error("Unhandled exception in reader", ex);
 			}

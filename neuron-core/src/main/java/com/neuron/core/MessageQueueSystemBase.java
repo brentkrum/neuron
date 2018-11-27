@@ -11,6 +11,7 @@ import org.apache.logging.log4j.Logger;
 import com.neuron.core.NeuronRef.INeuronStateLock;
 import com.neuron.core.NeuronStateSystem.NeuronState;
 import com.neuron.core.ObjectConfigBuilder.ObjectConfig;
+import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.FastLinkedList;
 
@@ -25,8 +26,10 @@ class MessageQueueSystemBase
 	private static final Logger LOG = LogManager.getLogger(MessageQueueSystemBase.class);
 	
 	protected static final String queueBrokerConfig_MaxMsgCount = "maxQueueMsgCount";
+	protected static final String queueBrokerConfig_MaxSimultaneousCheckoutCount = "maxSimultaneousCheckoutCount";
 
 	private static final int DEFAULT_QUEUE_MSG_COUNT = Config.getFWInt("core.MessageQueueSystem.defaultMaxQueueMsgCount", Integer.valueOf(1024));
+	private static final int DEFAULT_MAX_SIMULTANEOUS_CHECKOUT_COUNT = Config.getFWInt("core.MessageQueueSystem.defaultMaxSimultaneousCheckoutCount", Integer.valueOf(8));
 	private static final ReadWriteLock m_brokerLock = new ReentrantReadWriteLock(true);
 	private static final CharSequenceTrie<CreatedQueueBroker> m_queueBrokerByName = new CharSequenceTrie<>();
 
@@ -231,6 +234,7 @@ class MessageQueueSystemBase
 		private ReferenceCounted m_response;
 		
 		// These can be called multiple times
+		private boolean m_reset;
 		private boolean m_wasReceived;
 		private boolean m_notifiedReceived;
 		private boolean m_startedProcessing;
@@ -242,6 +246,7 @@ class MessageQueueSystemBase
 		private boolean m_undelivered; 
 		private boolean m_notifiedUndelivered; 
 		
+		private Runnable m_resetCallback;
 		
 		MessageWrapper(ReferenceCounted msg, NeuronRef listenerRef, IMessageQueueSubmissionListener listener) {
 			m_msg = msg.retain(); // We own a reference to it, in addition to the one we are passing along
@@ -254,12 +259,11 @@ class MessageQueueSystemBase
 			return this;
 		}
 
-//		void reset() {
-//			m_wasReceived = false;
-//			m_notifiedReceived = false;
-//			m_startedProcessing = false;
-//			m_notifiedStartedProcessing = false;
-//		}
+		void reset(Runnable resetCallback) {
+			m_resetCallback = resetCallback;
+			m_reset = true;
+			m_worker.requestMoreWork();
+		}
 		
 		// Mutually exclusive with setAsReceived()
 		void setAsUndelivered() {
@@ -293,10 +297,7 @@ class MessageQueueSystemBase
 
 		@Override
 		public void cancelProcessing() {
-			m_wasReceived = false;
-			m_notifiedReceived = false;
-			m_startedProcessing = false;
-			m_notifiedStartedProcessing = false;
+			throw new UnsupportedOperationException("This should not be called");
 		}
 
 		@Override
@@ -327,6 +328,21 @@ class MessageQueueSystemBase
 					// The message was NOT delivered, we still have two references (the one we added and the original)
 					ReferenceCountUtil.safeRelease(m_msg);
 					ReferenceCountUtil.safeRelease(m_msg);
+					return;
+				}
+				if (m_reset) {
+					m_reset = false;
+					if (!m_undelivered && !m_completedProcessing) {
+						m_wasReceived = false;
+						m_notifiedReceived = false;
+						m_startedProcessing = false;
+						m_notifiedStartedProcessing = false;
+						requestMoreWork();
+					}
+					if (m_resetCallback != null) {
+						m_resetCallback.run();
+						m_resetCallback = null;
+					}
 					return;
 				}
 				if (!m_wasReceived) {
@@ -406,9 +422,10 @@ class MessageQueueSystemBase
 	
 	static final class CreatedQueueBroker extends QueueBroker {
 		private final FastLinkedList<MessageWrapper> m_queue = new FastLinkedList<>();
+		private final FastLinkedList<CheckoutWrapper> m_inProcess = new FastLinkedList<>();
+		private int m_maxSimultaneous;
 		private int m_maxMsgCount;
 		private IMessageReader m_reader;
-		private CheckoutWrapper m_currentCheckout;
 		
 		private CreatedQueueBroker(String queueName) {
 			super(queueName);
@@ -439,6 +456,7 @@ class MessageQueueSystemBase
 			m_numConnectedReaders.incrementAndGet();
 			NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Reader connected to queue '{}'", m_queueName);
 			
+			m_maxSimultaneous = config.getInteger(MessageQueueSystemBase.queueBrokerConfig_MaxSimultaneousCheckoutCount, DEFAULT_MAX_SIMULTANEOUS_CHECKOUT_COUNT);
 			m_maxMsgCount = config.getInteger(MessageQueueSystemBase.queueBrokerConfig_MaxMsgCount, DEFAULT_QUEUE_MSG_COUNT);
 			final IMessageReader r = m_reader;
 			try(INeuronStateLock lock = m_reader.owner().lockState()) {
@@ -470,13 +488,20 @@ class MessageQueueSystemBase
 			}
 		}
 		
-		synchronized void closeReader(Promise<Void> promise) {
-			if (m_currentCheckout != null) {
-				m_currentCheckout.close0(promise);
-				m_currentCheckout = null;
-			} else {
-				promise.setSuccess((Void)null);
+		synchronized void closeReader(Promise<Void> closePromise) {
+			final TSPromiseCombiner groupPromise = new TSPromiseCombiner();
+			// Clear the in-process messages
+			while(true) {
+				// Remove the oldest item, reset it, and put back into queue
+				final CheckoutWrapper cw = m_inProcess.removeFirst();
+				if (cw == null) {
+					break;
+				}
+				Promise<Void> p = NeuronApplication.newPromise();
+				groupPromise.add(p);
+				cw.close0(p);
 			}
+			groupPromise.finish(closePromise);
 			m_reader.close();
 			m_reader = null;
 		}
@@ -487,9 +512,6 @@ class MessageQueueSystemBase
 			// still had a cached local copy
 			if (m_reader == null) {
 				return null;
-			}
-			if (m_currentCheckout != null) {
-				throw new IllegalStateException("This should not happen");
 			}
 			final MessageWrapper msg = m_queue.removeFirst();
 			if (msg != null) {
@@ -505,14 +527,16 @@ class MessageQueueSystemBase
 			if (m_reader == null) {
 				return null;
 			}
-			if (m_currentCheckout != null) {
-				throw new IllegalStateException("This should not happen");
+			if (m_inProcess.count() >= m_maxSimultaneous) {
+				return null;
 			}
 			final MessageWrapper msg = m_queue.removeFirst();
 			if (msg == null) {
 				return null;
 			}
-			return m_currentCheckout = new CheckoutWrapper(msg);
+			final CheckoutWrapper cw;
+			m_inProcess.add(cw = new CheckoutWrapper(msg));
+			return cw;
 		}
 		
 		@Override
@@ -535,7 +559,7 @@ class MessageQueueSystemBase
 			return true;
 		}
 		
-		private class CheckoutWrapper implements IMessageQueueSubmission {
+		private class CheckoutWrapper extends FastLinkedList.LLNode<CheckoutWrapper> implements IMessageQueueSubmission {
 			private final int m_id;
 			private volatile MessageWrapper m_wrapped;
 			private volatile boolean m_started;
@@ -544,6 +568,11 @@ class MessageQueueSystemBase
 			CheckoutWrapper(MessageWrapper wrapped) {
 				m_id = wrapped.id();
 				m_wrapped = wrapped;
+			}
+			
+			@Override
+			protected CheckoutWrapper getObject() {
+				return this;
 			}
 			
 			private void close0(Promise<Void> closingPromise) {
@@ -557,13 +586,18 @@ class MessageQueueSystemBase
 						m_closingPromise = closingPromise;
 						return;
 					}
-					if (LOG.isTraceEnabled()) {
-						LOG.trace("Queue {} moving incomplete message back to queue", m_queueName);
-					}
-					m_wrapped.cancelProcessing();
-					m_queue.addFirst(m_wrapped);
+					m_inProcess.remove(this);
+					final MessageWrapper mw = m_wrapped;
+					m_wrapped.reset(() -> {
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Queue {} moving incomplete message back to queue", m_queueName);
+						}
+						synchronized(CreatedQueueBroker.this) {
+							m_queue.addFirst(mw);
+						}						
+						m_closingPromise.setSuccess((Void)null);
+					});
 					m_wrapped = null;
-					m_closingPromise.setSuccess((Void)null);
 				}
 			}
 			
@@ -596,45 +630,51 @@ class MessageQueueSystemBase
 			@Override
 			public void cancelProcessing() {
 				synchronized(CreatedQueueBroker.this) {
-					if (m_wrapped != null) {
-						if (LOG.isTraceEnabled()) {
-							LOG.trace("Queue {} moving cancelled message back to queue", m_queueName);
+					if (m_wrapped == null) {
+						return;
+					}
+					if (LOG.isTraceEnabled()) {
+						LOG.trace("Queue {} moving cancelled message back to queue", m_queueName);
+					}
+					m_inProcess.remove(this);
+					final MessageWrapper mw = m_wrapped;
+					m_wrapped = null;
+					mw.reset(() -> {
+						synchronized(CreatedQueueBroker.this) {
+							m_queue.addFirst(m_wrapped);
+							if (m_reader != null) {
+								if (LOG.isTraceEnabled()) {
+									LOG.trace("Queue {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_queueName);
+								}
+								m_reader.onEvent(IMessageReader.Event.DataReady);
+							}
 						}
-						m_wrapped.cancelProcessing();
-						m_queue.addFirst(m_wrapped);
-						m_wrapped = null;
-						m_currentCheckout = null;
 						if (m_closingPromise != null) {
 							m_closingPromise.setSuccess((Void)null);
 							m_closingPromise = null;
 						}
-						if (m_reader != null) {
-							if (LOG.isTraceEnabled()) {
-								LOG.trace("Queue {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_queueName);
-							}
-							m_reader.onEvent(IMessageReader.Event.DataReady);
-						}
-					}
+					});
 				}
 			}
 
 			@Override
 			public void setAsProcessed(ReferenceCounted response) {
 				synchronized(CreatedQueueBroker.this) {
-					if (m_wrapped != null) {
-						m_wrapped.setAsProcessed(response);
-						m_wrapped = null;
-						m_currentCheckout = null;
-						if (m_closingPromise != null) {
-							m_closingPromise.setSuccess((Void)null);
-							m_closingPromise = null;
+					if (m_wrapped == null) {
+						return;
+					}
+					m_inProcess.remove(this);
+					m_wrapped.setAsProcessed(response);
+					m_wrapped = null;
+					if (m_closingPromise != null) {
+						m_closingPromise.setSuccess((Void)null);
+						m_closingPromise = null;
+					}
+					if (m_reader != null) {
+						if (LOG.isTraceEnabled()) {
+							LOG.trace("Queue {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_queueName);
 						}
-						if (m_reader != null) {
-							if (LOG.isTraceEnabled()) {
-								LOG.trace("Queue {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_queueName);
-							}
-							m_reader.onEvent(IMessageReader.Event.DataReady);
-						}
+						m_reader.onEvent(IMessageReader.Event.DataReady);
 					}
 				}
 			}

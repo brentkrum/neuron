@@ -80,7 +80,7 @@ class MessageQueueReader implements MessageQueueSystemBase.IMessageReader
 					submission.setAsProcessed( res );
 				} catch(Throwable t) {
 					NeuronApplication.logError(LOG, "Unhandled exception in user provided callback, returning null response message", t);
-					// We don't want to call cancelMessage here since we don't want to create an infinite loop of exceptions thrown from onData with
+					// We don't want to call cancelProcessing here since we don't want to create an infinite loop of exceptions thrown from onData with
 					// the same set of inputs being repeatedly fed back into it
 					submission.setAsProcessed(null);
 				}

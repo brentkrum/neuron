@@ -19,6 +19,7 @@ import com.neuron.core.netty.TSPromiseCombiner;
 import com.neuron.utility.CharSequenceTrie;
 import com.neuron.utility.FastLinkedList;
 
+import io.netty.util.ReferenceCountUtil;
 import io.netty.util.ReferenceCounted;
 import io.netty.util.concurrent.Future;
 import io.netty.util.concurrent.Promise;
@@ -253,7 +254,7 @@ public final class AddressableDuplexBusSystem
 		private Runnable m_resetCallback;
 		
 		MessageWrapper(ReferenceCounted msg, NeuronRef listenerRef, IDuplexBusSubmissionListener listener) {
-			m_requestMsg = msg;
+			m_requestMsg = msg.retain(); // We own a reference to it, in addition to the one we are passing along
 			m_listenerRef = listenerRef;
 			m_listener = listener;
 		}
@@ -349,6 +350,7 @@ public final class AddressableDuplexBusSystem
 					}
 					m_resetCallback.run();
 					m_resetCallback = null;
+					return;
 				}
 				if (!m_wasReceived) {
 					return;
@@ -400,6 +402,9 @@ public final class AddressableDuplexBusSystem
 							NeuronApplication.logError(LOG, "Unhandled exception in listener callback", ex);
 						}
 					}
+					ReferenceCountUtil.safeRelease(m_responseMsg);
+					// We still own a reference to this message, the other one was passed to reader
+					ReferenceCountUtil.safeRelease(m_requestMsg);
 				}
 				
 			}
@@ -711,17 +716,19 @@ public final class AddressableDuplexBusSystem
 						m_closePromise = closePromise;
 						return;
 					}
-					m_wrapped.reset(() -> {
+					m_inProcess.remove(this);
+					final MessageWrapper mw = m_wrapped;
+					m_wrapped = null;
+					mw.reset(() -> {
 						if (LOG.isTraceEnabled()) {
 							LOG.trace("Bus {} address {} moving message {} from in-process back to queue", m_busName, m_address, m_id);
 						}
 						synchronized(ReaderBroker.this) {
 							// Push to front of queue
-							m_queue.addFirst(m_wrapped);
+							m_queue.addFirst(mw);
 						}
 						closePromise.setSuccess((Void)null);
 					});
-					m_wrapped = null;
 				}
 			}
 			
@@ -755,27 +762,32 @@ public final class AddressableDuplexBusSystem
 			@Override
 			public void cancelProcessing() {
 				synchronized(ReaderBroker.this) {
-					m_wrapped.reset(() -> {
-						if (LOG.isTraceEnabled()) {
-							LOG.trace("Bus {} address {} moving message {} from in-process back to queue", m_busName, m_address, m_id);
-						}
+					if (m_wrapped == null) {
+						return;
+					}
+					if (LOG.isTraceEnabled()) {
+						LOG.trace("Bus {} address {} moving message {} from in-process back to queue", m_busName, m_address, m_id);
+					}
+					m_inProcess.remove(this);
+					final MessageWrapper mw = m_wrapped;
+					m_wrapped = null;
+					mw.reset(() -> {
 						synchronized(ReaderBroker.this) {
 							// Push to front of queue
-							m_queue.addFirst(m_wrapped);
+							m_queue.addFirst(mw);
+							if (m_reader != null) {
+								// We have to notify the reader that there might now be items to dequeue
+								if (LOG.isTraceEnabled()) {
+									LOG.trace("Bus {} address {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_busName, m_address);
+								}
+								m_reader.onEvent(IMessageReader.Event.DataReady);
+							}
 						}
 						if (m_closePromise != null) {
 							m_closePromise.setSuccess((Void)null);
 							m_closePromise = null;
 						}
 					});
-					m_wrapped = null;
-					if (m_reader != null) {
-						// We have to notify the reader that there might now be items to dequeue
-						if (LOG.isTraceEnabled()) {
-							LOG.trace("Bus {} address {} CheckoutWrapper.setAsProcessed() sending DataReady event to reader", m_busName, m_address);
-						}
-						m_reader.onEvent(IMessageReader.Event.DataReady);
-					}
 				}
 			}
 
