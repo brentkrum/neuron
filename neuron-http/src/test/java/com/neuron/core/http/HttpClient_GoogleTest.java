@@ -8,6 +8,7 @@ import java.nio.file.Files;
 
 import org.asynchttpclient.netty.util.ByteBufUtils;
 import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -53,7 +54,9 @@ public class HttpClient_GoogleTest {
 	}
 
 	private static Promise<Void> m_testFuture;
+	private static String m_testBody;
 	private static Promise<Void> m_testFuture2;
+	private static String m_testFileContents;
 	
 	@Test
 	public void testHittingGoogleDotCom() {
@@ -63,7 +66,13 @@ public class HttpClient_GoogleTest {
 		assertTrue(NeuronStateTestUtils.bringOnline("HitGoogleTemplate", "HitGoogleTest", ObjectConfigBuilder.emptyConfig()).awaitUninterruptibly(5000));
 		
 		assertTrue(m_testFuture.awaitUninterruptibly(5000));
+		assertTrue(m_testFuture.isSuccess());
 		assertTrue(m_testFuture2.awaitUninterruptibly(5000));
+		assertTrue(m_testFuture2.isSuccess());
+		Assertions.assertTrue(m_testBody.contains("<html"));
+		Assertions.assertTrue(m_testBody.contains("</html>"));
+		Assertions.assertTrue(m_testFileContents.contains("<html"));
+		Assertions.assertTrue(m_testFileContents.contains("</html>"));
 	}
 	
 	public static class HitGoogleTemplate extends DefaultTestNeuronTemplateBase {
@@ -94,11 +103,13 @@ public class HttpClient_GoogleTest {
 					}
 					System.out.println(res.getHTTPStatusCode() + " " + res.getHTTPStatusText());
 					if (res.getResponseData() != null) {
-						System.out.println(ByteBufUtils.byteBuf2String(Charset.forName("UTF-8"), res.getResponseData()));
+						m_testBody = ByteBufUtils.byteBuf2String(Charset.forName("UTF-8"), res.getResponseData());
+						System.out.println(m_testBody);
+						m_testFuture.setSuccess((Void)null);
 					} else {
 						System.out.println(">>> no body data <<<");
+						m_testFuture.setFailure(new RuntimeException("No body data"));
 					}
-					m_testFuture.setSuccess((Void)null);
 				});
 				
 				File outputFile = new File("./test.html");
@@ -112,8 +123,8 @@ public class HttpClient_GoogleTest {
 					}
 					System.out.println(res.getHTTPStatusCode() + " " + res.getHTTPStatusText());
 					try {
-						String str = new String(Files.readAllBytes(outputFile.toPath()));
-						System.out.println(str);
+						m_testFileContents = new String(Files.readAllBytes(outputFile.toPath()));
+						System.out.println(m_testFileContents);
 						m_testFuture2.setSuccess((Void)null);
 					} catch(Exception ex) {
 						ex.printStackTrace();

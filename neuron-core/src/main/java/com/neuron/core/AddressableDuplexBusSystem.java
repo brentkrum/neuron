@@ -36,6 +36,7 @@ public final class AddressableDuplexBusSystem
 	
 	public static final String readerConfig_MaxQueueMsgCount = "maxQueueMsgCount";
 	public static final String readerConfig_MaxSimultaneousMsgCount = "maxSimultaneousMsgCount";
+	public static final String readerConfig_RemoveAddressOnDisconnect = "removeAddressOnDisconnect";
 
 	private static final int DEFAULT_QUEUE_MSG_COUNT = Config.getFWInt("core.AddressableDuplexBusSystem.defaultMaxQueueMsgCount", Integer.valueOf(1024));
 	private static final ReadWriteLock m_busNameLock = new ReentrantReadWriteLock(true);
@@ -416,7 +417,7 @@ public final class AddressableDuplexBusSystem
 		private final GatherBrokers m_gather = new GatherBrokers();
 		private final ReadWriteLock m_addressLock = new ReentrantReadWriteLock(true);
 		private final String m_busName;
-		private final CharSequenceTrie<ReaderBroker> m_address = new CharSequenceTrie<>();
+		private final CharSequenceTrie<ReaderBroker> m_addresses = new CharSequenceTrie<>();
 		private final LinkedList<ReaderBroker> m_addressPatterns = new LinkedList<>();
 		
 		AddressableDuplexBus(String busName) {
@@ -424,7 +425,7 @@ public final class AddressableDuplexBusSystem
 		}
 		
 		void close() {
-			m_address.forEach((addr, broker) -> {
+			m_addresses.forEach((addr, broker) -> {
 				broker.close();
 				return true;
 			});
@@ -437,7 +438,7 @@ public final class AddressableDuplexBusSystem
 			ReaderBroker broker;
 			m_addressLock.readLock().lock();
 			try {
-				broker = m_address.get(address);
+				broker = m_addresses.get(address);
 				if (broker == null) {
 					for(ReaderBroker b : m_addressPatterns) {
 						if (b.m_addressPattern.matcher(address).matches()) {
@@ -451,7 +452,7 @@ public final class AddressableDuplexBusSystem
 						return false;
 					}
 					LOG.info("Bus {}, auto-creating broker at address: {}", m_busName, address);
-					m_address.addOrFetch(address, broker = new ReaderBroker(m_busName, address));
+					m_addresses.addOrFetch(address, broker = new ReaderBroker(new BusContext(address)));
 				}
 				return broker.tryEnqueue(msg, listener);
 			} finally {
@@ -463,14 +464,14 @@ public final class AddressableDuplexBusSystem
 			ReaderBroker broker;
 			m_addressLock.writeLock().lock();
 			try {
-				broker = m_address.get(address);
+				broker = m_addresses.get(address);
 				if (broker == null) {
 					for(ReaderBroker b : m_addressPatterns) {
-						if (b.m_addressPattern.matcher(address).matches()) {
+						if (b.m_busContext.m_addressPattern.matcher(address).matches()) {
 							throw new IllegalArgumentException("In bus '" + m_busName + "' the address '" + address + "' matches the addressPattern '" + b.m_address + "'.  Cannot listen on an address that matches an existing address pattern.");
 						}
 					}
-					m_address.addOrFetch(address, broker = new ReaderBroker(m_busName, address));
+					m_addresses.addOrFetch(address, broker = new ReaderBroker(new BusContext(address)));
 				}
 				broker.setNewReader(config, new AddressableDuplexBusReader(ref, broker, config, listener));
 			} finally {
@@ -482,7 +483,7 @@ public final class AddressableDuplexBusSystem
 			m_addressLock.writeLock().lock();
 			try {
 				m_gather.reset(addressPattern);
-				m_address.forEach(m_gather);
+				m_addresses.forEach(m_gather);
 				final ReaderBroker broker = m_gather.createBroker();
 				m_addressPatterns.add(broker);
 				broker.setNewReader(config, new AddressableDuplexBusReader(ref, broker, config, listener));
@@ -503,7 +504,7 @@ public final class AddressableDuplexBusSystem
 				if (m_gather.existingBrokers.size() == 0) {
 					// Create a new broker
 					LOG.info("Bus {}, creating pattern broker at address '{}'", m_busName, addressPattern.toString());
-					return new ReaderBroker(m_busName, addressPattern);
+					return new ReaderBroker(new BusContext(addressPattern));
 				}
 //				
 //				if (m_gather.existingBrokers.size() == 1) {
@@ -513,7 +514,7 @@ public final class AddressableDuplexBusSystem
 //					return broker;
 //				}
 				// Merge all existing broker's queued items
-				final ReaderBroker broker = new ReaderBroker(m_busName, addressPattern);
+				final ReaderBroker broker = new ReaderBroker(new BusContext(addressPattern));
 				for(ReaderBroker oldBroker : m_gather.existingBrokers) {
 					LOG.info("Bus {}, merging broker at address '{}' into new pattern broker for pattern '{}'", m_busName, oldBroker.m_address, broker.m_address);
 					broker.merge(oldBroker);
@@ -538,9 +539,51 @@ public final class AddressableDuplexBusSystem
 			
 		}
 		
+		private final class BusContext {
+			private final String m_address;
+			private final Pattern m_addressPattern;
+			
+			BusContext(String address) {
+				m_address = address;
+				m_addressPattern = null;
+			}
+
+			BusContext(Pattern addressPattern) {
+				m_address = addressPattern.pattern();
+				m_addressPattern = addressPattern;
+			}
+			
+			String getBusName() {
+				return m_busName;
+			}
+
+			String getAddress() {
+				return m_address;
+			}
+			
+			Pattern getAddressPattern() {
+				return m_addressPattern;
+			}
+			
+			void removeAddressFromBus(ReaderBroker broker) {
+				m_addressLock.writeLock().lock();
+				try {
+					if (m_addressPattern != null) {
+						LOG.info("Bus {}, removing broker for address pattern: {}", m_busName, m_address);
+						m_addressPatterns.remove(broker);
+					} else {
+						LOG.info("Bus {}, removing broker at address: {}", m_busName, m_address);
+						m_addresses.remove(m_address);
+					}
+				} finally {
+					m_addressLock.writeLock().unlock();
+				}
+			}
+		}
 	}
 	
 	static final class ReaderBroker {
+		private final AddressableDuplexBus.BusContext m_busContext;
 		private final String m_busName;
 		private final String m_address;
 		private final Pattern m_addressPattern;
@@ -549,20 +592,29 @@ public final class AddressableDuplexBusSystem
 		private int m_maxSimultaneous;
 		private int m_maxQueueCount;
 		private IMessageReader m_reader;
+		private boolean m_removeOnReaderDisconnect = true;
 		
-		ReaderBroker(String busName, String address) {
-			m_busName = busName;
-			m_address = address;
-			m_addressPattern = null;
+		ReaderBroker(AddressableDuplexBus.BusContext busContext) {
+			m_busContext = busContext;
+			m_busName = m_busContext.getBusName();
+			m_address = m_busContext.getAddress();
+			m_addressPattern = m_busContext.getAddressPattern();
 			m_maxQueueCount = DEFAULT_QUEUE_MSG_COUNT;
 		}
-
-		ReaderBroker(String busName, Pattern addressPattern) {
-			m_busName = busName;
-			m_address = addressPattern.pattern();
-			m_addressPattern = addressPattern;
-			m_maxQueueCount = DEFAULT_QUEUE_MSG_COUNT;
-		}
+//		
+//		ReaderBroker(String busName, String address) {
+//			m_busName = busName;
+//			m_address = address;
+//			m_addressPattern = null;
+//			m_maxQueueCount = DEFAULT_QUEUE_MSG_COUNT;
+//		}
+//
+//		ReaderBroker(String busName, Pattern addressPattern) {
+//			m_busName = busName;
+//			m_address = addressPattern.pattern();
+//			m_addressPattern = addressPattern;
+//			m_maxQueueCount = DEFAULT_QUEUE_MSG_COUNT;
+//		}
 		
 		String busName() {
 			return m_busName;
@@ -596,6 +648,7 @@ public final class AddressableDuplexBusSystem
 			
 			m_maxQueueCount = config.getInteger(AddressableDuplexBusSystem.readerConfig_MaxQueueMsgCount, DEFAULT_QUEUE_MSG_COUNT);
 			m_maxSimultaneous = config.getInteger(AddressableDuplexBusSystem.readerConfig_MaxSimultaneousMsgCount, 4);
+			m_removeOnReaderDisconnect = config.getBoolean(readerConfig_RemoveAddressOnDisconnect, Boolean.TRUE);
 			
 			final IMessageReader r = m_reader;
 			try(INeuronStateLock lock = m_reader.owner().lockState()) {
@@ -618,21 +671,32 @@ public final class AddressableDuplexBusSystem
 				});
 
 				lock.addStateAsyncListener(NeuronState.Disconnecting, (successful, neuronRef, promise) -> {
+					if (m_removeOnReaderDisconnect) {
+						m_busContext.removeAddressFromBus(ReaderBroker.this);
+						m_reader.close();
+						m_reader = null;
+					}
+					
 					final Promise<Void> closePromise = NeuronApplication.newPromise();
+					startCloseReader(closePromise);
 					closePromise.addListener((f) -> {
 						try(INeuronStateLock l = neuronRef.lockState()) {
 							NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from bus '{}' address '{}'", m_busName, m_address);
 						}
-						promise.setSuccess((Void)null);
+						if (m_removeOnReaderDisconnect) {
+							close();
+						} else {
+							m_reader.close();
+							m_reader = null;
+						}
 						readerDisconnected();
-						// TODO Do we need to remove this address from the Bus!?!?!?!? <<<<------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+						promise.setSuccess((Void)null);
 					});
-					closeReader(closePromise);
 				});
 			}
 		}
 		
-		synchronized void closeReader(Promise<Void> closePromise) {
+		private synchronized void startCloseReader(Promise<Void> closePromise) {
 			final TSPromiseCombiner groupPromise = new TSPromiseCombiner();
 			// Clear the in-process messages
 			while(true) {
@@ -646,8 +710,6 @@ public final class AddressableDuplexBusSystem
 				cw.close0(p);
 			}
 			groupPromise.finish(closePromise);
-			m_reader.close();
-			m_reader = null;
 		}
 		
 		synchronized IAddressableDuplexBusSubmission dequeue() {
@@ -673,7 +735,6 @@ public final class AddressableDuplexBusSystem
 			if (m_queue.count() >= m_maxQueueCount) {
 				return false;
 			}
-			// TODO If system is shutting down, reject messages <<<<<<----------------------------------------------------------------
 			
 			final MessageWrapper mw = new MessageWrapper(msg, NeuronSystemTLS.currentNeuron(), listener);
 			if (!m_queue.add(mw)) {

@@ -21,6 +21,7 @@ import org.asynchttpclient.AsyncCompletionHandlerBase;
 import org.asynchttpclient.AsyncHttpClient;
 import org.asynchttpclient.AsyncHttpClientConfig.ResponseBodyPartFactory;
 import org.asynchttpclient.BoundRequestBuilder;
+import org.asynchttpclient.DefaultAsyncHttpClientConfig;
 import org.asynchttpclient.Dsl;
 import org.asynchttpclient.HttpResponseBodyPart;
 import org.asynchttpclient.ListenableFuture;
@@ -47,6 +48,11 @@ import io.netty.util.internal.PlatformDependent;
 
 public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeuronInitialization {
 	private static final Logger LOG = LogManager.getLogger(HTTPClientNeuron.class);
+	
+	public static final String Config_MaxSimultaneousRequests = "maxSimultaneousRequests";
+	public static final String Config_MaxConnections = "maxConnections";
+	public static final String Config_MaxConnectionsPerHost = "maxConnectionsPerHost";
+	
 	private final ObjectConfig m_config;
 	private final AtomicInteger m_numOutstandingRequests = new AtomicInteger();
 	private final ReadWriteLock m_disconnectLock = new ReentrantReadWriteLock(true);
@@ -96,17 +102,17 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 		
 		NeuronApplication.getTaskPool().submit(() -> {
 			try {
-				m_client = Dsl.asyncHttpClient(Dsl.config()
+				Integer value;
+				DefaultAsyncHttpClientConfig.Builder dsl = Dsl.config()
 					.setEventLoopGroup(NeuronApplication.getIOPool())
 					.setAllocator(PooledByteBufAllocator.DEFAULT)
+					.setResponseBodyPartFactory(ResponseBodyPartFactory.LAZY);
 					// .setTcpNoDelay(tcpNoDelay)
 					// .setUserAgent(userAgent)
 					// .setConnectionTtl(connectionTtl)
 					// .setConnectTimeout(connectTimeout)
 					// .setKeepAlive(keepAlive)
 					// .setKeepAliveStrategy(keepAliveStrategy)
-					// .setMaxConnections(maxConnections)
-					// .setMaxConnectionsPerHost(maxConnectionsPerHost)
 					// .setFollowRedirect(followRedirect)
 					// .setMaxRedirects(maxRedirects)
 					// .setPooledConnectionIdleTimeout(pooledConnectionIdleTimeout)
@@ -124,7 +130,16 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 					// .setStrict302Handling(strict302Handling)
 					// .setUseInsecureTrustManager(useInsecureTrustManager)
 					// .setUseNativeTransport(useNativeTransport)
-					.setResponseBodyPartFactory(ResponseBodyPartFactory.LAZY));
+				value = m_config.getInteger(Config_MaxConnections, null);
+				if (value != null) {
+					dsl.setMaxConnections(value);
+				}
+				value = m_config.getInteger(Config_MaxConnectionsPerHost, null);
+				if (value != null) {
+					dsl.setMaxConnectionsPerHost(value);
+				}
+				
+				m_client = Dsl.asyncHttpClient(dsl);
 			} catch (Exception ex) {
 //				NeuronApplication.logError(LOG, "Exception creating HTTP client", ex);
 				initPromise.setFailure(ex);
@@ -169,72 +184,76 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 
 	@Override
 	public void connectResources() {
-		DuplexMessageQueueSystem.defineQueue("Execute", ObjectConfigBuilder.emptyConfig(), (IMessageQueueSubmission context) -> {
-			final HTTPClientNeuronRequest nReq = (HTTPClientNeuronRequest)context.startProcessing();
-			if (nReq == null) {
-				return;
-			}
-			if (!startRequest()) {
-				context.cancelProcessing();
-				return;
-			}
-			final BoundRequestBuilder req;
-			try {
-				req = m_client.prepareGet(nReq.getURL());
-				
-				req.setMethod(nReq.getMethod());
-				if (nReq.getQueryParams() != null) {
-					for(HTTPClientNeuronRequest.NameValue nv :  nReq.getQueryParams()) {
-						req.addQueryParam(nv.name, nv.value);
+		DuplexMessageQueueSystem.defineQueue("Execute",
+			ObjectConfigBuilder.config()
+				.option(DuplexMessageQueueSystem.queueBrokerConfig_MaxSimultaneousCheckoutCount, m_config.getInteger(Config_MaxSimultaneousRequests, 128))
+				.build(),
+			(IMessageQueueSubmission context) -> {
+				final HTTPClientNeuronRequest nReq = (HTTPClientNeuronRequest)context.startProcessing();
+				if (nReq == null) {
+					return;
+				}
+				if (!startRequest()) {
+					context.cancelProcessing();
+					return;
+				}
+				final BoundRequestBuilder req;
+				try {
+					req = m_client.prepareGet(nReq.getURL());
+					
+					req.setMethod(nReq.getMethod());
+					if (nReq.getQueryParams() != null) {
+						for(HTTPClientNeuronRequest.NameValue nv :  nReq.getQueryParams()) {
+							req.addQueryParam(nv.name, nv.value);
+						}
 					}
-				}
-				if (nReq.getFormParams() != null) {
-					for(HTTPClientNeuronRequest.NameValue nv :  nReq.getFormParams()) {
-						req.addFormParam(nv.name, nv.value);
+					if (nReq.getFormParams() != null) {
+						for(HTTPClientNeuronRequest.NameValue nv :  nReq.getFormParams()) {
+							req.addFormParam(nv.name, nv.value);
+						}
+					} else if (nReq.getBodyData() != null) {
+						req.setBody(nReq.getBodyData());
 					}
-				} else if (nReq.getBodyData() != null) {
-					req.setBody(nReq.getBodyData());
-				}
-				if (nReq.getHeaders() != null) {
-					for(HTTPClientNeuronRequest.NameValue nv :  nReq.getHeaders()) {
-						req.addHeader(nv.name, nv.value);
+					if (nReq.getHeaders() != null) {
+						for(HTTPClientNeuronRequest.NameValue nv :  nReq.getHeaders()) {
+							req.addHeader(nv.name, nv.value);
+						}
 					}
-				}
-				if (nReq.followRedirect()  != null) {
-					req.setFollowRedirect(nReq.followRedirect());
-				}
-				if (nReq.readTimeout() != null) {
-					req.setReadTimeout(nReq.readTimeout());
-				}
-				if (nReq.requestTimeout() != null) {
-					req.setRequestTimeout(nReq.requestTimeout());
-				}
-				//req.setRealm(realm)
-				//req.setSignatureCalculator(signatureCalculator);
-				
-				if (nReq.getResponseBodyOutputFile() != null) {
-					final FileDownloadRequestHandler handler = new FileDownloadRequestHandler(context, nReq.getResponseBodyOutputFile());
-					if (!handler.openOutputFile()) {
-						return;
+					if (nReq.followRedirect()  != null) {
+						req.setFollowRedirect(nReq.followRedirect());
 					}
-					// I am trusting that if req.execute throws an exception it is not in a bad state.  If it catches an
-					// exception I am expecting it to call the future it returns.  If it allows an exception to be thrown
-					// I trust that it means that it will not put anything into the future
-					handler.setResponseFuture(req.execute(handler));
-				} else {
-					final RequestHandler handler = new RequestHandler(context);
-					// I am trusting that if req.execute throws an exception it is not in a bad state.  If it catches an
-					// exception I am expecting it to call the future it returns.  If it allows an exception to be thrown
-					// I trust that it means that it will not put anything into the future
-					handler.setResponseFuture(req.execute(handler));
+					if (nReq.readTimeout() != null) {
+						req.setReadTimeout(nReq.readTimeout());
+					}
+					if (nReq.requestTimeout() != null) {
+						req.setRequestTimeout(nReq.requestTimeout());
+					}
+					//req.setRealm(realm)
+					//req.setSignatureCalculator(signatureCalculator);
+					
+					if (nReq.getResponseBodyOutputFile() != null) {
+						final FileDownloadRequestHandler handler = new FileDownloadRequestHandler(context, nReq.getResponseBodyOutputFile());
+						if (!handler.openOutputFile()) {
+							return;
+						}
+						// I am trusting that if req.execute throws an exception it is not in a bad state.  If it catches an
+						// exception I am expecting it to call the future it returns.  If it allows an exception to be thrown
+						// I trust that it means that it will not put anything into the future
+						handler.setResponseFuture(req.execute(handler));
+					} else {
+						final RequestHandler handler = new RequestHandler(context);
+						// I am trusting that if req.execute throws an exception it is not in a bad state.  If it catches an
+						// exception I am expecting it to call the future it returns.  If it allows an exception to be thrown
+						// I trust that it means that it will not put anything into the future
+						handler.setResponseFuture(req.execute(handler));
+					}
+				} catch(Exception ex) {
+					LOG.error("Unexpected exception", ex);
+					context.setAsProcessed(new HTTPClientNeuronResponse("Exception processing request parameters, see log for details"));
+					endRequest();
+					return;
 				}
-			} catch(Exception ex) {
-				LOG.error("Unexpected exception", ex);
-				context.setAsProcessed(new HTTPClientNeuronResponse("Exception processing request parameters, see log for details"));
-				endRequest();
-				return;
-			}
-		});
+			});
 
 	}
 
@@ -331,10 +350,10 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 		private final File m_outputFile;
 		private ListenableFuture<Response> m_responseFuture;
 		private volatile boolean m_responseComplete;
-		private boolean m_workerDone;
-		private AsynchronousFileChannel m_fileChannel;
+		private volatile boolean m_workerDone;
+		private volatile AsynchronousFileChannel m_fileChannel;
 		private volatile boolean m_ioOperationPending;
-		private long m_currentPosition;
+		private volatile long m_currentPosition;
 		
 		FileDownloadRequestHandler(IMessageQueueSubmission context, File outputFile) {
 			m_context = context;
@@ -419,6 +438,12 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 					if (m_responseComplete) {
 						m_workerDone = true;
 						try {
+							m_fileChannel.close();
+						} catch(Exception ex) {
+							LOG.info("Unexpected exception closing {}", m_outputFile, ex);
+						}
+						m_fileChannel = null;
+						try {
 							Response r = m_responseFuture.get();
 							// r could be null if there is no Http status (any kind of protocol failure)
 							if (r == null) {
@@ -470,6 +495,14 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 				m_workerDone = true;
 				m_ioOperationPending = false;
 				LOG.error("Exception writing {}", m_outputFile, exc);
+				if (m_fileChannel != null) {
+					try {
+						m_fileChannel.close();
+					} catch(Exception ex) {
+						LOG.info("Unexpected exception closing {}", m_outputFile, ex);
+					}
+					m_fileChannel = null;
+				}
 				final HTTPClientNeuronResponse nResponse = new HTTPClientNeuronResponse("An I/O exception occurred writing " + m_outputFile.toString() + ", see log for details");
 				m_context.setAsProcessed(nResponse);
 				// Kick off the worker task again to clear the queue

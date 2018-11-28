@@ -8,6 +8,7 @@ import io.netty.util.concurrent.Future;
 public final class SimplexMessageQueueSystem extends MessageQueueSystemBase
 {
 	public static final String queueBrokerConfig_MaxMsgCount = MessageQueueSystemBase.queueBrokerConfig_MaxMsgCount;
+	public static final String queueBrokerConfig_MaxSimultaneousCheckoutCount = MessageQueueSystemBase.queueBrokerConfig_MaxSimultaneousCheckoutCount;
 
 	private SimplexMessageQueueSystem() {
 	}

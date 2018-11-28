@@ -480,15 +480,19 @@ class MessageQueueSystemBase
 						try(INeuronStateLock l = neuronRef.lockState()) {
 							NeuronApplication.log(Level.INFO, Level.DEBUG, LOG, "Disconnected from queue '{}'", m_queueName);
 						}
+						synchronized(CreatedQueueBroker.this) {
+							m_reader.close();
+							m_reader = null;
+						}
 						promise.setSuccess((Void)null);
 						readerDisconnected();
 					});
-					closeReader(closePromise);
+					startCloseReader(closePromise);
 				});
 			}
 		}
 		
-		synchronized void closeReader(Promise<Void> closePromise) {
+		private synchronized void startCloseReader(Promise<Void> closePromise) {
 			final TSPromiseCombiner groupPromise = new TSPromiseCombiner();
 			// Clear the in-process messages
 			while(true) {
@@ -502,8 +506,6 @@ class MessageQueueSystemBase
 				cw.close0(p);
 			}
 			groupPromise.finish(closePromise);
-			m_reader.close();
-			m_reader = null;
 		}
 		
 		@Override
