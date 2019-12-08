@@ -3,6 +3,7 @@ package com.neuron.core;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.fasterxml.jackson.databind.node.POJONode;
 import com.neuron.core.serializer.json.JSONSerializer;
 
 public final class ObjectConfigBuilder
@@ -17,7 +18,7 @@ public final class ObjectConfigBuilder
 		return new ObjectConfig();
 	}
 	
-	public abstract static class ObjectConfigArrayBuilder {
+	public static class ObjectConfigArrayBuilder {
 		private final ArrayNode m_array = JSONSerializer.createArrayNode();
 		
 		public ObjectConfigArrayBuilder option(int value) {
@@ -34,6 +35,7 @@ public final class ObjectConfigBuilder
 			m_array.add(value);
 			return this;
 		}
+
 		public ObjectConfigArrayBuilder optionArray(ObjectConfigArrayBuilder array) {
 			m_array.add(array.m_array);
 			return this;
@@ -64,6 +66,10 @@ public final class ObjectConfigBuilder
 			m_obj.put(key, value);
 			return this;
 		}
+		public ObjectConfigObjectBuilder pojoOption(String key, Object value) {
+			m_obj.putPOJO(key, value);
+			return this;
+		}
 		public ObjectConfigObjectBuilder optionArray(String key, ObjectConfigArrayBuilder array) {
 			m_obj.set(key, array.m_array);
 			return this;
@@ -82,6 +88,14 @@ public final class ObjectConfigBuilder
 		public String getString(String key, String defaultValue) {
 			final JsonNode n = m_obj.get(key);
 			return (n==null) ? defaultValue : n.asText(defaultValue);
+		}
+		
+		public Object getPOJO(String key) {
+			final JsonNode n = m_obj.get(key);
+			if (n == null || n.isNull() || !n.isPojo()) {
+				return null;
+			}
+			return ((POJONode)n).getPojo();
 		}
 		
 		public boolean has(String key) {
@@ -117,6 +131,14 @@ public final class ObjectConfigBuilder
 		}
 		
 		public Long getLong(String key, Long defaultValue) {
+			final JsonNode n = m_obj.get(key);
+			if (n == null || n.isNull() || !n.canConvertToLong()) {
+				return defaultValue;
+			}
+			return n.asLong();
+		}
+		
+		public long getlong(String key, long defaultValue) {
 			final JsonNode n = m_obj.get(key);
 			if (n == null || n.isNull() || !n.canConvertToLong()) {
 				return defaultValue;

@@ -92,8 +92,9 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 		m_serverBootstrap.group(NeuronApplication.getIOPool(), NeuronApplication.getIOPool())
 			.channel(NioServerSocketChannel.class)
 			.handler(new BindHandler())
-			.option(ChannelOption.SO_BACKLOG, 32)
+			.option(ChannelOption.SO_BACKLOG, 32) // TODO Make this configurable 
 			.childHandler(new MyChannelInitializer())
+			.childOption(ChannelOption.ALLOCATOR, NeuronApplication.allocator())
 			.childOption(ChannelOption.SO_KEEPALIVE, true);
 
 		m_serverBootstrap.register().addListener((regFuture) -> {
@@ -260,8 +261,8 @@ public class InboundSocketNeuron extends DefaultNeuronInstanceBase implements IN
 		public void channelRead(ChannelHandlerContext ctx, Object msg)
 		{
 			if (!(msg instanceof ByteBuf)) {
-				ReferenceCountUtil.release(msg);
 				LOG.error("channelRead got a non-ByteBuf: {}", msg.getClass().getCanonicalName());
+				ReferenceCountUtil.release(msg);
 				return;
 			}
 			final Connection c = ctx.channel().attr(CONNECTION).get();

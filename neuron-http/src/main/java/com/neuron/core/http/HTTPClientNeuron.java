@@ -340,7 +340,6 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 	}
 
 	private static final Set<OpenOption> FILE_DOWNLOAD_OPTIONS = new HashSet<>(Arrays.asList(StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE));
-   private static final FileAttribute<?>[] NO_ATTRIBUTES = new FileAttribute[0];
    
 	private final class FileDownloadRequestHandler extends AsyncCompletionHandlerBase implements Runnable {
 		private final int m_requestId = m_requestNum.incrementAndGet();
@@ -362,7 +361,7 @@ public class HTTPClientNeuron extends DefaultNeuronInstanceBase implements INeur
 		
 		public boolean openOutputFile() {
 			try {
-				m_fileChannel = AsynchronousFileChannel.open(m_outputFile.toPath(), FILE_DOWNLOAD_OPTIONS, NeuronApplication.getTaskPool(), NO_ATTRIBUTES);
+				m_fileChannel = AsynchronousFileChannel.open(m_outputFile.toPath(), FILE_DOWNLOAD_OPTIONS, NeuronApplication.getTaskPool());
 				return true;
 			} catch(Exception ex) {
 				m_context.setAsProcessed(new HTTPClientNeuronResponse("Exception opening file: " + ex.getMessage()));

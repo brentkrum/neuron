@@ -27,6 +27,7 @@ class MessageQueueSystemBase
 	
 	protected static final String queueBrokerConfig_MaxMsgCount = "maxQueueMsgCount";
 	protected static final String queueBrokerConfig_MaxSimultaneousCheckoutCount = "maxSimultaneousCheckoutCount";
+	protected static final String queueBrokerConfig_OnlineStates = "onlineStates";
 
 	private static final int DEFAULT_QUEUE_MSG_COUNT = Config.getFWInt("core.MessageQueueSystem.defaultMaxQueueMsgCount", Integer.valueOf(1024));
 	private static final int DEFAULT_MAX_SIMULTANEOUS_CHECKOUT_COUNT = Config.getFWInt("core.MessageQueueSystem.defaultMaxSimultaneousCheckoutCount", Integer.valueOf(8));

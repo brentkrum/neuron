@@ -22,7 +22,7 @@ public class JavaScriptNeuronTemplate extends DefaultNeuronTemplateBase
 	@Override
 	public Future<Void> runSelftest()
 	{
-		return NeuronApplication.getTaskPool().next().newSucceededFuture(null);
+		return NeuronApplication.newSucceededFuture();
 	}
 
 	@Override

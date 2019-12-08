@@ -46,8 +46,8 @@ public final class AddressableDuplexBusSystem
 	
 	private static final ReadWriteLock m_shutdownLock = new ReentrantReadWriteLock(true);
 	private static Promise<Void> m_shutdownPromise;
-	private static boolean m_shuttingDown = false;
-	private static boolean m_shutdownComplete = false;
+	private static volatile boolean m_shuttingDown = false;
+	private static volatile boolean m_shutdownComplete = false;
 	
 	private AddressableDuplexBusSystem() {
 	}
@@ -120,9 +120,14 @@ public final class AddressableDuplexBusSystem
 	
 	private static void readerDisconnected() {
 		if (m_numConnectedReaders.decrementAndGet() == 0) {
+			/*
+			 * Right here:
+			 * 	shutdown could start and complete
+			 * 	OR a new reader could get through its read lock
+			 */
 			m_shutdownLock.writeLock().lock();
 			try {
-				if (m_shuttingDown && m_numConnectedSubmitters.get()==0) {
+				if (m_shuttingDown && !m_shutdownComplete && m_numConnectedReaders.get()==0 && m_numConnectedSubmitters.get()==0) {
 					m_shutdownComplete = true;
 					m_shutdownPromise.setSuccess((Void)null);
 				}
@@ -181,9 +186,14 @@ public final class AddressableDuplexBusSystem
 	
 	private static void endAddSubmitter() {
 		if (m_numConnectedSubmitters.decrementAndGet() == 0) {
+			/*
+			 * Right here:
+			 * 	shutdown could start and complete
+			 * 	OR a new submitter could get through its read lock
+			 */
 			m_shutdownLock.writeLock().lock();
 			try {
-				if (m_shuttingDown && m_numConnectedReaders.get()==0) {
+				if (m_shuttingDown && !m_shutdownComplete && m_numConnectedSubmitters.get()==0 && m_numConnectedReaders.get()==0) {
 					m_shutdownComplete = true;
 					m_shutdownPromise.setSuccess((Void)null);
 				}

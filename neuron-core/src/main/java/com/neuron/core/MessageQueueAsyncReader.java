@@ -15,6 +15,7 @@ class MessageQueueAsyncReader implements MessageQueueSystemBase.IMessageReader
 	private final EventWorker m_worker;
 	private final NeuronRef m_owner;
 	private final IMessageQueueAsyncReaderCallback m_callback;
+	private final NeuronState[] m_onlineStates;
 	private QueueBroker m_broker;
 	
 	MessageQueueAsyncReader(NeuronRef ref, QueueBroker broker, ObjectConfig config, IMessageQueueAsyncReaderCallback callback) {
@@ -22,6 +23,12 @@ class MessageQueueAsyncReader implements MessageQueueSystemBase.IMessageReader
 		m_broker = broker;
 		m_worker = new EventWorker(ref);
 		m_callback = callback;
+		Object o = config.getPOJO(MessageQueueSystemBase.queueBrokerConfig_OnlineStates);
+		if (o instanceof NeuronState[]) {
+			m_onlineStates = (NeuronState[])o;
+		} else {
+			m_onlineStates = new NeuronState[] {NeuronState.SystemOnline, NeuronState.Online, NeuronState.GoingOffline};
+		}
 	}
 	
 	@Override
@@ -56,7 +63,7 @@ class MessageQueueAsyncReader implements MessageQueueSystemBase.IMessageReader
 		protected void _doWork(INeuronStateLock neuronLock)
 		{
 			// We only deliver data to SystemOnline, Online and GoingOffline neurons
-			if (!neuronLock.isStateOneOf(NeuronState.SystemOnline, NeuronState.Online, NeuronState.GoingOffline)) {
+			if (!neuronLock.isStateOneOf(m_onlineStates)) {
 				return;
 			}
 			

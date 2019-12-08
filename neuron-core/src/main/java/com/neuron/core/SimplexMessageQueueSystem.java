@@ -9,7 +9,8 @@ public final class SimplexMessageQueueSystem extends MessageQueueSystemBase
 {
 	public static final String queueBrokerConfig_MaxMsgCount = MessageQueueSystemBase.queueBrokerConfig_MaxMsgCount;
 	public static final String queueBrokerConfig_MaxSimultaneousCheckoutCount = MessageQueueSystemBase.queueBrokerConfig_MaxSimultaneousCheckoutCount;
-
+	public static final String queueBrokerConfig_OnlineStates = MessageQueueSystemBase.queueBrokerConfig_OnlineStates;
+			
 	private SimplexMessageQueueSystem() {
 	}
 
@@ -59,7 +60,7 @@ public final class SimplexMessageQueueSystem extends MessageQueueSystemBase
 	 *  do anything with msg, the reference still stands and is now re-owned by the caller.
 	 *  
 	 */
-	public static boolean submitToQueue(String fqqn, ReferenceCounted msg, IMessageQueueSubmissionListener listener) {
+	public static boolean submitToQueue(String fqqn, ReferenceCounted msg, ISimplexMessageQueueSubmissionListener listener) {
 		return MessageQueueSystemBase.submitToQueue(fqqn, msg, listener);
 	}
 	

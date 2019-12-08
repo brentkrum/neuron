@@ -19,6 +19,7 @@ import com.neuron.utility.FastLinkedListInit;
 import com.neuron.utility.StackTraceUtil;
 
 import io.netty.buffer.ByteBuf;
+import io.netty.buffer.ByteBufAllocator;
 import io.netty.buffer.CompositeByteBuf;
 import io.netty.buffer.PooledByteBufAllocator;
 import io.netty.channel.DefaultEventLoopGroup;
@@ -107,6 +108,10 @@ public final class NeuronApplication {
 		return m_args;
 	}
 
+	public static ByteBufAllocator allocator() {
+		return m_ioBufferPool;
+	}
+	
 	public static ByteBuf allocateIOBuffer() {
 		return m_ioBufferPool.buffer();
 	}
@@ -134,7 +139,10 @@ public final class NeuronApplication {
 	public static <T> Future<T> newSucceededFuture(T result) {
 		return m_taskPool.next().newSucceededFuture(result);
 	}
-	
+	public static Future<Void> newSucceededFuture() {
+		return m_taskPool.next().newSucceededFuture(null);
+	}
+
    public static ScheduledFuture<?> scheduleForCurrentTemplate(Runnable command, long delay, TimeUnit unit) {
    	NeuronSystemTLS.validateTemplateAwareThread();
    	final TemplateRef ref = NeuronSystemTLS.currentTemplate();
