@@ -12,7 +12,7 @@
 	<properties>
 		<!-- Dependency versions -->
 		<jackson.version>2.9.7</jackson.version>
-		<NuProcess.version>1.2.4</NuProcess.version>
+		<NuProcess.version>2.0.5</NuProcess.version>
 		<javax-mail.version>1.6.2</javax-mail.version>
 		<byte-buddy.version>1.8.22</byte-buddy.version>
 		<log4j2.version>2.11.1</log4j2.version>
